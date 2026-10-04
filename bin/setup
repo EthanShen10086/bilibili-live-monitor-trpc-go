@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$PROJECT_DIR"
+mkdir -p dist
+export GOPATH="$PROJECT_DIR/.cache/gopath"
+export GOMODCACHE="$PROJECT_DIR/.cache/gomod"
+export GOCACHE="$PROJECT_DIR/.cache/build"
+go mod download
+CGO_ENABLED=0 go build -trimpath -o dist/monitor ./cmd/monitor
+printf '%s\n' 'Built monitor. Configure .env, then check-config --probe.'

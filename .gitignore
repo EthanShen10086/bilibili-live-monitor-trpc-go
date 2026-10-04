@@ -1,0 +1,24 @@
+# Credentials and user-specific settings
+**/.env
+**/.env.*
+!**/.env.example
+# Dependencies, caches, installed runtimes and generated output
+**/node_modules/
+**/.cache/
+**/.runtime/
+**/dist/
+**/vendor/**/dist/
+**/vendor/**/*.js
+**/vendor/**/*.d.ts
+# Runtime state, logs and validation artifacts
+**/var/
+**/evidence/
+**/*.db
+**/*.db-*
+**/*.sqlite*
+**/*.log
+**/*.test
+**/*.out
+**/coverage/
+.DS_Store
+.work/

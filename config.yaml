@@ -1,0 +1,35 @@
+subscription:
+  room_id: 1616
+detector:
+  mode: polling
+  polling:
+    interval_seconds: 10
+    timeout_seconds: 5
+  official:
+    app_id_env: BILI_APP_ID
+    access_key_id_env: BILI_ACCESS_KEY_ID
+    access_key_secret_env: BILI_ACCESS_KEY_SECRET
+    anchor_code_env: BILI_ANCHOR_CODE
+schedule:
+  timezone: Asia/Shanghai
+  weekdays: [3, 5, 6, 7]
+  start: '18:00'
+  end: '24:00'
+notification:
+  mode: feishu_group
+  pending_ttl_minutes: 30
+  group:
+    webhook_env: FEISHU_WEBHOOK
+    secret_env: FEISHU_WEBHOOK_SECRET
+  private:
+    app_id_env: FEISHU_APP_ID
+    app_secret_env: FEISHU_APP_SECRET
+    receive_id_type: open_id
+    receive_id_env: FEISHU_RECEIVE_ID
+deployment:
+  active: local
+  local:
+    confirm_each_boot: true
+  cloud:
+    ssh_host: live-monitor
+    install_dir: /opt/live-monitor
