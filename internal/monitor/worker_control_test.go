@@ -238,3 +238,22 @@ func TestDeclinedApprovalIdleAndCancellation(t *testing.T) {
 		t.Fatal("approval did not stop")
 	}
 }
+
+func TestApprovedBootDoesNotOverwriteWorkerStatus(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(t)
+	if e := AtomicJSON(filepath.Join(root, "var/boot-approval.json"), Approval{"test", "approved", 1000}); e != nil {
+		t.Fatal(e)
+	}
+	original := Status{PID: 999, Running: true, State: "healthy", Updated: 1000}
+	if e := AtomicJSON(filepath.Join(root, "var/status.json"), original); e != nil {
+		t.Fatal(e)
+	}
+	if e := awaitApproval(context.Background(), root, c, "test"); e != nil {
+		t.Fatal(e)
+	}
+	actual, e := ReadStatus(root)
+	if e != nil || actual.PID != original.PID || actual.State != original.State || actual.Updated != original.Updated {
+		t.Fatal(actual, e)
+	}
+}

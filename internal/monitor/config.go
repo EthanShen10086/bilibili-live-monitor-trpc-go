@@ -13,6 +13,9 @@ import (
 )
 
 type Config struct {
+	Maintenance struct {
+		RetentionDays *int `yaml:"history_retention_days,omitempty"`
+	} `yaml:"maintenance"`
 	Subscription struct {
 		RoomID int64 `yaml:"room_id"`
 	} `yaml:"subscription"`
@@ -129,6 +132,9 @@ func minutes(s string) (int, error) {
 	return h*60 + m, nil
 }
 func (c Config) Validate() error {
+	if days := c.HistoryRetentionDays(); days < 0 || days > 3650 {
+		return fmt.Errorf("history_retention_days must be 0..3650")
+	}
 	if v := c.Detector.Polling.NotifiedLiveMinutes; v != nil && (*v < 1 || *v > 60) {
 		return fmt.Errorf("notified_live_interval_minutes must be 1..60")
 	}
@@ -253,4 +259,11 @@ func (c Config) NotifiedLiveSeconds() int {
 		minutes = *c.Detector.Polling.NotifiedLiveMinutes
 	}
 	return max(c.PollingSeconds(), minutes*60)
+}
+
+func (c Config) HistoryRetentionDays() int {
+	if c.Maintenance.RetentionDays != nil {
+		return *c.Maintenance.RetentionDays
+	}
+	return 90
 }

@@ -159,7 +159,13 @@ func awaitApproval(ctx context.Context, root string, c Config, boot string) erro
 	host, _ := os.Hostname()
 	status := Status{PID: os.Getpid(), Host: host, Running: true, State: "waiting_confirmation", Mode: c.Detector.Mode, HeartbeatSeconds: 10}
 	report := func() error { return writer.Report(&status, time.Now(), false) }
-	defer func() { status.Running = false; status.State = "stopped"; writer.Report(&status, time.Now(), true) }()
+	defer func() {
+		if writer.Writes > 0 && ctx.Err() != nil {
+			status.Running = false
+			status.State = "stopped"
+			writer.Report(&status, time.Now(), true)
+		}
+	}()
 	a := ReadApproval(root)
 	if a.Boot == boot && a.Decision == "approved" {
 		return nil

@@ -10,29 +10,31 @@ import (
 )
 
 type Status struct {
-	AdaptiveVersion      int    `json:"adaptive_polling_version"`
-	EffectiveInterval    int    `json:"effective_polling_interval_seconds"`
-	NotifiedLiveInterval int    `json:"notified_live_interval_seconds"`
-	PollingPhase         string `json:"polling_phase"`
-	OptimizationVersion  int    `json:"runtime_optimization_version"`
-	HeartbeatSeconds     int    `json:"heartbeat_interval_seconds"`
-	QueueRefreshes       int    `json:"queue_refreshes"`
-	PollingInterval      int    `json:"polling_interval_seconds"`
-	NextPoll             int64  `json:"next_poll_at,omitempty"`
-	PID                  int    `json:"pid"`
-	Host                 string `json:"host"`
-	Instance             string `json:"instance"`
-	Running              bool   `json:"running"`
-	Updated              int64  `json:"updated_at"`
-	Started              int64  `json:"started_at"`
-	Mode                 string `json:"mode"`
-	Notification         string `json:"notification"`
-	State                string `json:"detector_state"`
-	InWindow             bool   `json:"in_window"`
-	LastObservation      int64  `json:"last_observation_at,omitempty"`
-	LastSent             int64  `json:"last_sent_at,omitempty"`
-	LastError            string `json:"last_error,omitempty"`
-	Pending              any    `json:"pending"`
+	ResourceSafetyVersion int    `json:"resource_safety_version"`
+	RetentionDays         int    `json:"history_retention_days"`
+	AdaptiveVersion       int    `json:"adaptive_polling_version"`
+	EffectiveInterval     int    `json:"effective_polling_interval_seconds"`
+	NotifiedLiveInterval  int    `json:"notified_live_interval_seconds"`
+	PollingPhase          string `json:"polling_phase"`
+	OptimizationVersion   int    `json:"runtime_optimization_version"`
+	HeartbeatSeconds      int    `json:"heartbeat_interval_seconds"`
+	QueueRefreshes        int    `json:"queue_refreshes"`
+	PollingInterval       int    `json:"polling_interval_seconds"`
+	NextPoll              int64  `json:"next_poll_at,omitempty"`
+	PID                   int    `json:"pid"`
+	Host                  string `json:"host"`
+	Instance              string `json:"instance"`
+	Running               bool   `json:"running"`
+	Updated               int64  `json:"updated_at"`
+	Started               int64  `json:"started_at"`
+	Mode                  string `json:"mode"`
+	Notification          string `json:"notification"`
+	State                 string `json:"detector_state"`
+	InWindow              bool   `json:"in_window"`
+	LastObservation       int64  `json:"last_observation_at,omitempty"`
+	LastSent              int64  `json:"last_sent_at,omitempty"`
+	LastError             string `json:"last_error,omitempty"`
+	Pending               any    `json:"pending"`
 }
 
 func ReadStatus(root string) (Status, error) {
@@ -61,6 +63,12 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 	host, _ := os.Hostname()
 	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: time.Now().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
 
+	s.ResourceSafetyVersion = 1
+	s.RetentionDays = c.HistoryRetentionDays()
+	nextCleanup, e := db.NextCleanupAt(c.HistoryRetentionDays(), time.Now())
+	if e != nil {
+		return e
+	}
 	s.AdaptiveVersion = 1
 	s.EffectiveInterval = c.PollingSeconds()
 	s.NotifiedLiveInterval = c.NotifiedLiveSeconds()
@@ -272,6 +280,20 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				}
 			}
 		}
+		if !nextCleanup.IsZero() && !time.Now().Before(nextCleanup) {
+			removed, err := db.CleanupHistory(c.HistoryRetentionDays(), time.Now())
+			if err != nil {
+				return err
+			}
+			queue.Dirty = queue.Dirty || removed > 0
+			nextCleanup, e = db.NextCleanupAt(c.HistoryRetentionDays(), time.Now())
+			if e != nil {
+				return e
+			}
+			if removed > 0 {
+				Event(root, "history_cleaned", removed)
+			}
+		}
 		if e = queue.Refresh(time.Now()); e != nil {
 			return e
 		}
@@ -321,7 +343,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 		}
 		after := time.Now()
 		boundary := after.Truncate(time.Minute).Add(time.Minute)
-		deadline := Earliest(writer.LastWrite.Add(WorkerHeartbeat), queue.NextCheck, queue.NextDue, boundary)
+		deadline := Earliest(writer.LastWrite.Add(WorkerHeartbeat), queue.NextCheck, queue.NextDue, nextCleanup, boundary)
 		if window && !blocked && (c.Detector.Mode == "polling" || official == nil) {
 			deadline = Earliest(deadline, next)
 		}

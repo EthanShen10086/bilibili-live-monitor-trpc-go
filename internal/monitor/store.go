@@ -37,6 +37,7 @@ func OpenStore(file string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	_, e = db.Exec(`PRAGMA journal_mode=DELETE; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS observations(room INTEGER PRIMARY KEY,live INTEGER NOT NULL,start TEXT,key TEXT);
+CREATE TABLE IF NOT EXISTS maintenance(id INTEGER PRIMARY KEY,last_cleanup INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS jobs(key TEXT PRIMARY KEY,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next INTEGER NOT NULL,expires INTEGER NOT NULL,last_error TEXT);`)
 	if e != nil {
 		db.Close()
@@ -194,4 +195,52 @@ func (s *Store) PollingPhase(room int64) (string, error) {
 		return "notified_live", nil
 	}
 	return "awaiting_notification", nil
+}
+
+func (s *Store) NextCleanupAt(days int, now time.Time) (time.Time, error) {
+	if days == 0 {
+		return time.Time{}, nil
+	}
+	var last int64
+	e := s.DB.QueryRow("SELECT last_cleanup FROM maintenance WHERE id=1").Scan(&last)
+	if e == sql.ErrNoRows {
+		return now, nil
+	}
+	if e != nil {
+		return time.Time{}, e
+	}
+	return Earliest(now.Add(24*time.Hour), time.UnixMilli(last).Add(24*time.Hour)), nil
+}
+func (s *Store) CleanupHistory(days int, now time.Time) (int64, error) {
+	if days == 0 {
+		return 0, nil
+	}
+	tx, e := s.DB.Begin()
+	if e != nil {
+		return 0, e
+	}
+	defer tx.Rollback()
+	var last int64
+	e = tx.QueryRow("SELECT last_cleanup FROM maintenance WHERE id=1").Scan(&last)
+	if e != nil && e != sql.ErrNoRows {
+		return 0, e
+	}
+	if e == nil && now.UnixMilli() >= last && now.Sub(time.UnixMilli(last)) < 24*time.Hour {
+		return 0, nil
+	}
+	r, e := tx.Exec(`DELETE FROM jobs WHERE key IN (SELECT key FROM jobs
+ WHERE status IN ('sent','failed','expired') AND expires<?
+ AND key NOT IN (SELECT key FROM observations WHERE key IS NOT NULL)
+ ORDER BY expires,key LIMIT 200)`, now.Add(-time.Duration(days)*24*time.Hour).UnixMilli())
+	if e != nil {
+		return 0, e
+	}
+	n, e := r.RowsAffected()
+	if e != nil {
+		return 0, e
+	}
+	if _, e = tx.Exec("INSERT OR REPLACE INTO maintenance(id,last_cleanup) VALUES(1,?)", now.UnixMilli()); e != nil {
+		return 0, e
+	}
+	return n, tx.Commit()
 }
