@@ -19,8 +19,9 @@ type Config struct {
 	Detector struct {
 		Mode    string `yaml:"mode"`
 		Polling struct {
-			Interval int `yaml:"interval_seconds"`
-			Timeout  int `yaml:"timeout_seconds"`
+			Interval        *int `yaml:"interval_seconds,omitempty"`
+			IntervalMinutes *int `yaml:"interval_minutes,omitempty"`
+			Timeout         int  `yaml:"timeout_seconds"`
 		} `yaml:"polling"`
 		Official struct {
 			AppID     string `yaml:"app_id_env"`
@@ -133,7 +134,13 @@ func (c Config) Validate() error {
 	if c.Detector.Mode != "polling" && c.Detector.Mode != "official" {
 		return fmt.Errorf("invalid detector mode")
 	}
-	if c.Detector.Polling.Interval < 1 || c.Detector.Polling.Timeout < 1 {
+	if c.Detector.Polling.IntervalMinutes != nil && c.Detector.Polling.Interval != nil {
+		return fmt.Errorf("configure exactly one of interval_minutes or legacy interval_seconds")
+	}
+	if c.Detector.Polling.IntervalMinutes != nil && (*c.Detector.Polling.IntervalMinutes < 1 || *c.Detector.Polling.IntervalMinutes > 60) {
+		return fmt.Errorf("interval_minutes must be 1..60")
+	}
+	if c.PollingSeconds() < 1 || c.PollingSeconds() > 3600 || c.Detector.Polling.Timeout < 1 {
 		return fmt.Errorf("invalid polling interval/timeout")
 	}
 	if c.Notification.Mode != "feishu_group" && c.Notification.Mode != "feishu_private" {
@@ -220,8 +227,18 @@ func Backoff(n, base int) time.Duration {
 		n = 16
 	}
 	v := base * (1 << (n - 1))
-	if v > 300 {
-		v = 300
+	if cap := max(300, base); v > cap {
+		v = cap
 	}
 	return time.Duration(v) * time.Second
+}
+
+func (c Config) PollingSeconds() int {
+	if c.Detector.Polling.IntervalMinutes != nil {
+		return *c.Detector.Polling.IntervalMinutes * 60
+	}
+	if c.Detector.Polling.Interval != nil {
+		return *c.Detector.Polling.Interval
+	}
+	return 0
 }

@@ -3,7 +3,7 @@ subscription:
 detector:
   mode: polling
   polling:
-    interval_seconds: 10
+    interval_minutes: 1  # 每次查询结束后等待 1 分钟；可设 1–60
     timeout_seconds: 5
   official:
     app_id_env: BILI_APP_ID

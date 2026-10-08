@@ -10,6 +10,8 @@ import (
 )
 
 type Status struct {
+	PollingInterval int    `json:"polling_interval_seconds"`
+	NextPoll        int64  `json:"next_poll_at,omitempty"`
 	PID             int    `json:"pid"`
 	Host            string `json:"host"`
 	Instance        string `json:"instance"`
@@ -50,7 +52,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 	}
 	defer db.DB.Close()
 	host, _ := os.Hostname()
-	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: time.Now().UnixMilli(), Mode: c.Detector.Mode, Notification: c.Notification.Mode, State: "starting"}
+	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: time.Now().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
 	report := func() error {
 		s.Updated = time.Now().UnixMilli()
 		s.Pending, e = db.Counts()
@@ -115,7 +117,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							s.State = "blocked"
 						}
 						s.LastError = err.Error()
-						next = time.Now().Add(Backoff(failures, c.Detector.Polling.Interval))
+						next = time.Now().Add(Backoff(failures, c.PollingSeconds()))
 						Event(root, "detector_error", s.LastError)
 					} else {
 						if ctx.Err() == nil && c.InWindow(time.Now()) {
@@ -129,7 +131,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 						failures = 0
 						s.State = "healthy"
 						s.LastError = ""
-						next = time.Now().Add(time.Duration(c.Detector.Polling.Interval) * time.Second)
+						next = time.Now().Add(time.Duration(c.PollingSeconds()) * time.Second)
 					}
 				}
 			} else {
@@ -240,6 +242,10 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				}
 				Event(root, "notification_error", err.Error())
 			}
+		}
+		s.NextPoll = 0
+		if !next.IsZero() {
+			s.NextPoll = next.UnixMilli()
 		}
 		if e = report(); e != nil {
 			return e

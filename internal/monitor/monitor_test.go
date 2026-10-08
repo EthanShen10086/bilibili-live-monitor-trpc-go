@@ -286,7 +286,9 @@ func TestWorkerDurableSendAndRestart(t *testing.T) {
 	c.Schedule.Weekdays = []int{1, 2, 3, 4, 5, 6, 7}
 	c.Schedule.Start = "00:00"
 	c.Schedule.End = "24:00"
-	c.Detector.Polling.Interval = 1
+	c.Detector.Polling.IntervalMinutes = nil
+	legacyInterval := 1
+	c.Detector.Polling.Interval = &legacyInterval
 	t.Setenv(c.Notification.Group.Webhook, "https://open.feishu.cn/open-apis/bot/v2/hook/test")
 	t.Setenv(c.Notification.Group.Secret, "test")
 	var sends atomic.Int32
@@ -318,5 +320,66 @@ func TestNodeStatusPendingArrayCompatibility(t *testing.T) {
 	}
 	if _, e := ReadStatus(root); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestMinutePollingValidationAndBackoff(t *testing.T) {
+	c := testConfig(t)
+	if e := c.Validate(); e != nil || c.PollingSeconds() != 60 {
+		t.Fatal(e, c.PollingSeconds())
+	}
+	five := 5
+	c.Detector.Polling.IntervalMinutes = &five
+	if e := c.Validate(); e != nil || c.PollingSeconds() != 300 {
+		t.Fatal(e, c.PollingSeconds())
+	}
+	legacy := 10
+	c.Detector.Polling.Interval = &legacy
+	if c.Validate() == nil {
+		t.Fatal("ambiguous units accepted")
+	}
+	c.Detector.Polling.IntervalMinutes = nil
+	if e := c.Validate(); e != nil || c.PollingSeconds() != 10 {
+		t.Fatal(e, c.PollingSeconds())
+	}
+	c.Detector.Polling.Interval = nil
+	if c.Validate() == nil {
+		t.Fatal("missing interval accepted")
+	}
+	for _, value := range []int{0, -1, 61} {
+		c.Detector.Polling.IntervalMinutes = &value
+		if c.Validate() == nil {
+			t.Fatal("invalid minutes accepted", value)
+		}
+	}
+	if Backoff(1, 60) != time.Minute || Backoff(3, 60) != 4*time.Minute || Backoff(4, 60) != 5*time.Minute || Backoff(5, 600) != 10*time.Minute {
+		t.Fatal("minute retry intervals")
+	}
+}
+
+func TestMinuteWorkerSchedulesWithoutRepeatedQueries(t *testing.T) {
+	c := testConfig(t)
+	c.Schedule.Weekdays = []int{1, 2, 3, 4, 5, 6, 7}
+	c.Schedule.Start = "00:00"
+	c.Schedule.End = "24:00"
+	t.Setenv(c.Notification.Group.Webhook, "https://open.feishu.cn/open-apis/bot/v2/hook/test")
+	t.Setenv(c.Notification.Group.Secret, "unit-secret")
+	var queries atomic.Int32
+	h := mockHTTP(func(r *http.Request) (*http.Response, error) {
+		queries.Add(1)
+		return response(`{"code":0,"data":{"room_id":11163068,"short_id":1616,"live_status":0,"title":"minute test","live_time":""}}`, 200), nil
+	})
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	if e := Run(ctx, root, c, h); e != nil {
+		t.Fatal(e)
+	}
+	if queries.Load() != 1 {
+		t.Fatal("unexpected repeated query", queries.Load())
+	}
+	status, e := ReadStatus(root)
+	if e != nil || status.PollingInterval != 60 || status.NextPoll-status.LastObservation < 60000 {
+		t.Fatal(status, e)
 	}
 }
