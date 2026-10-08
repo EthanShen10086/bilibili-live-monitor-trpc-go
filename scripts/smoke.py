@@ -10,8 +10,7 @@ for binary in ('monitor',):
         today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).isoweekday()
         excluded_today = today % 7 + 1
         cfg = (go / 'config.yaml').read_text().replace('weekdays: [3, 5, 6, 7]', f'weekdays: [{excluded_today}]')
-        if platform.system() != 'Darwin':
-            cfg = cfg.replace('active: local', 'active: cloud')
+        cfg = cfg.replace('active: local', 'active: cloud')
         (root / 'config.yaml').write_text(cfg)
         env = root / '.env'
         env.write_text('FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/smoke\nFEISHU_WEBHOOK_SECRET=smoke-secret\n')
@@ -27,7 +26,7 @@ for binary in ('monitor',):
             trpc = (go / 'trpc_go.yaml').read_text().replace('19028', str(ports[0])).replace('19029', str(ports[1]))
             (root / 'trpc_go.yaml').write_text(trpc)
         with (root / 'process.log').open('w+') as log:
-            p = subprocess.Popen([str(go / 'dist' / binary), '--root', str(root), 'run'], stdout=log, stderr=log)
+            p = subprocess.Popen([str(go / 'dist' / binary), '--root', str(root), 'run', '--managed', 'cloud'], stdout=log, stderr=log)
             try:
                 deadline = time.monotonic() + 20
                 while True:
@@ -51,8 +50,8 @@ for binary in ('monitor',):
                             time.sleep(.1)
                     with urllib.request.urlopen(f'http://127.0.0.1:{ports[1]}/status', timeout=5) as response:
                         assert json.load(response)['detector_state'] == 'outside_window'
-                second = subprocess.run([str(go / 'dist/monitor'), '--root', str(root), 'run'], capture_output=True, timeout=5)
-                assert second.returncode != 0 and b'ELOCKED' in second.stderr
+                second = subprocess.run([str(go / 'dist/monitor'), '--root', str(root), 'run', '--managed', 'cloud'], capture_output=True, timeout=5)
+                assert second.returncode != 0 and b'ELOCKED' in (root / 'var/error.log').read_bytes()
                 p.terminate(); assert p.wait(timeout=40) == 0
                 assert not json.loads((root / 'var/status.json').read_text())['running']
                 assert not (root / 'var/instance.guard.lock').exists()

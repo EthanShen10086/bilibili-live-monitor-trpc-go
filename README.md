@@ -28,3 +28,5 @@ Go 1.26.3 或兼容更高版本。编译后只需 dist/monitor、config.yaml、.
 后台资源优化：[实现说明、Mac 与云端更新步骤](docs/RESOURCE_OPTIMIZATION.md)。保持每 1 分钟轮询。
 
 开播通知成功后自动改为每 5 分钟确认直播状态，观测到下播恢复每 1 分钟；可用 `notified_live_interval_minutes` 调整。详见资源优化手册。
+
+资源保护与复现：[响应上限、日志轮转、历史保留和等待确认节流](docs/RESOURCE_SAFETY.md)。
