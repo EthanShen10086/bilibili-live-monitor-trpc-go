@@ -50,6 +50,7 @@ type Official struct {
 	game     string
 	ws       *websocket.Conn
 	Events   chan Observation
+	Changed  chan struct{}
 	mu       sync.Mutex
 	err      error
 	ready    chan struct{}
@@ -60,13 +61,17 @@ type Official struct {
 }
 
 func NewOfficial(c Config, h *HTTP, room int64) *Official {
-	return &Official{c: c, h: h, room: room, Events: make(chan Observation, 128), ready: make(chan struct{}), done: make(chan struct{})}
+	return &Official{c: c, h: h, room: room, Events: make(chan Observation, 128), Changed: make(chan struct{}, 1), ready: make(chan struct{}), done: make(chan struct{})}
 }
 func (o *Official) setError(e error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.err == nil {
 		o.err = e
+		select {
+		case o.Changed <- struct{}{}:
+		default:
+		}
 	}
 }
 func (o *Official) api(ctx context.Context, route string, payload any, out any) error {
@@ -344,7 +349,7 @@ func (o *Official) Tick(ctx context.Context) error {
 	if time.Since(last) > 45*time.Second {
 		return &RemoteError{"Official", "heartbeat_timeout", true}
 	}
-	if time.Since(o.lastGame) > 20*time.Second {
+	if time.Since(o.lastGame) >= 20*time.Second {
 		if e := o.api(ctx, "heartbeat", map[string]string{"game_id": o.game}, nil); e != nil {
 			return e
 		}

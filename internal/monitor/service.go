@@ -10,22 +10,25 @@ import (
 )
 
 type Status struct {
-	PollingInterval int    `json:"polling_interval_seconds"`
-	NextPoll        int64  `json:"next_poll_at,omitempty"`
-	PID             int    `json:"pid"`
-	Host            string `json:"host"`
-	Instance        string `json:"instance"`
-	Running         bool   `json:"running"`
-	Updated         int64  `json:"updated_at"`
-	Started         int64  `json:"started_at"`
-	Mode            string `json:"mode"`
-	Notification    string `json:"notification"`
-	State           string `json:"detector_state"`
-	InWindow        bool   `json:"in_window"`
-	LastObservation int64  `json:"last_observation_at,omitempty"`
-	LastSent        int64  `json:"last_sent_at,omitempty"`
-	LastError       string `json:"last_error,omitempty"`
-	Pending         any    `json:"pending"`
+	OptimizationVersion int    `json:"runtime_optimization_version"`
+	HeartbeatSeconds    int    `json:"heartbeat_interval_seconds"`
+	QueueRefreshes      int    `json:"queue_refreshes"`
+	PollingInterval     int    `json:"polling_interval_seconds"`
+	NextPoll            int64  `json:"next_poll_at,omitempty"`
+	PID                 int    `json:"pid"`
+	Host                string `json:"host"`
+	Instance            string `json:"instance"`
+	Running             bool   `json:"running"`
+	Updated             int64  `json:"updated_at"`
+	Started             int64  `json:"started_at"`
+	Mode                string `json:"mode"`
+	Notification        string `json:"notification"`
+	State               string `json:"detector_state"`
+	InWindow            bool   `json:"in_window"`
+	LastObservation     int64  `json:"last_observation_at,omitempty"`
+	LastSent            int64  `json:"last_sent_at,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
+	Pending             any    `json:"pending"`
 }
 
 func ReadStatus(root string) (Status, error) {
@@ -53,15 +56,20 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 	defer db.DB.Close()
 	host, _ := os.Hostname()
 	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: time.Now().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
-	report := func() error {
-		s.Updated = time.Now().UnixMilli()
-		s.Pending, e = db.Counts()
-		if e != nil {
-			return e
-		}
-		return AtomicJSON(filepath.Join(root, "var/status.json"), s)
+
+	s.OptimizationVersion = 1
+	s.HeartbeatSeconds = int(WorkerHeartbeat / time.Second)
+	queue := QueueSchedule{Store: db, Dirty: true}
+	if e = queue.Refresh(time.Now()); e != nil {
+		return e
 	}
-	defer func() { s.Running = false; s.State = "stopped"; report() }()
+	writer := StatusWriter{File: filepath.Join(root, "var/status.json")}
+	report := func() error {
+		s.Pending = queue.Counts
+		s.QueueRefreshes = queue.Refreshes
+		return writer.Report(&s, time.Now(), false)
+	}
+	defer func() { s.Running = false; s.State = "stopped"; writer.Report(&s, time.Now(), true) }()
 	notify := Feishu{Config: c, HTTP: h}
 	var next time.Time
 	failures := 0
@@ -93,7 +101,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				if e = report(); e != nil {
 					return e
 				}
-				Pause(ctx, time.Second)
+				Pause(ctx, WorkerHeartbeat)
 				continue
 			}
 			s.State = "outside_window"
@@ -121,12 +129,14 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 						Event(root, "detector_error", s.LastError)
 					} else {
 						if ctx.Err() == nil && c.InWindow(time.Now()) {
-							_, err = db.Observe(o, catchup, c.Notification.TTL)
+							var added bool
+							added, err = db.Observe(o, catchup, c.Notification.TTL)
 							if err != nil {
 								return err
 							}
 							catchup = false
 							s.LastObservation = o.At
+							queue.Dirty = queue.Dirty || added
 						}
 						failures = 0
 						s.State = "healthy"
@@ -141,7 +151,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 						if e = report(); e != nil {
 							return e
 						}
-						if e = Pause(ctx, time.Second); e != nil {
+						if e = Pause(ctx, WorkerHeartbeat); e != nil {
 							break
 						}
 						continue
@@ -161,6 +171,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 					if err == nil && c.InWindow(time.Now()) {
 						_, err = db.Observe(o, true, c.Notification.TTL)
 						s.LastObservation = o.At
+						queue.Dirty = true
 					}
 					if err != nil {
 						blocked = !Retryable(err)
@@ -170,7 +181,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							if e = report(); e != nil {
 								return e
 							}
-							Pause(ctx, time.Second)
+							Pause(ctx, WorkerHeartbeat)
 							continue
 						}
 						failures++
@@ -195,6 +206,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							if c.InWindow(time.Now()) {
 								_, err = db.Observe(o, false, c.Notification.TTL)
 								s.LastObservation = o.At
+								queue.Dirty = true
 							}
 						default:
 							goto drained
@@ -220,16 +232,23 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				}
 			}
 		}
-		job, err := db.Due(time.Now())
-		if err != nil {
-			return err
+		if e = queue.Refresh(time.Now()); e != nil {
+			return e
+		}
+		var job *Job
+		if !queue.NextDue.IsZero() && !time.Now().Before(queue.NextDue) {
+			job, e = db.Due(time.Now())
+			if e != nil {
+				return e
+			}
+			queue.Dirty = true
 		}
 		if job != nil {
 			var n Notice
 			if json.Unmarshal([]byte(job.Payload), &n) != nil {
 				return fmt.Errorf("invalid durable notification payload")
 			}
-			err = notify.Send(ctx, FormatNotice(n, c.Subscription.RoomID), job.Key)
+			err := notify.Send(ctx, FormatNotice(n, c.Subscription.RoomID), job.Key)
 			if err == nil {
 				if e = db.Sent(job.Key); e != nil {
 					return e
@@ -247,12 +266,44 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 		if !next.IsZero() {
 			s.NextPoll = next.UnixMilli()
 		}
+		if e = queue.Refresh(time.Now()); e != nil {
+			return e
+		}
 		if e = report(); e != nil {
 			return e
 		}
-		if e = Pause(ctx, time.Second); e != nil {
-			break
+		after := time.Now()
+		boundary := after.Truncate(time.Minute).Add(time.Minute)
+		deadline := Earliest(writer.LastWrite.Add(WorkerHeartbeat), queue.NextCheck, queue.NextDue, boundary)
+		if window && !blocked && (c.Detector.Mode == "polling" || official == nil) {
+			deadline = Earliest(deadline, next)
 		}
+		var events <-chan Observation
+		var changed <-chan struct{}
+		if official != nil && s.State != "session_cleanup_failed" {
+			official.mu.Lock()
+			ack := official.lastAck
+			official.mu.Unlock()
+			deadline = Earliest(deadline, official.lastGame.Add(20*time.Second), ack.Add(45*time.Second+time.Millisecond))
+			events = official.Events
+			changed = official.Changed
+		}
+		timer := time.NewTimer(max(time.Millisecond, time.Until(deadline)))
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+		case <-changed:
+		case o := <-events:
+			if c.InWindow(time.Now()) && ctx.Err() == nil {
+				if _, e = db.Observe(o, false, c.Notification.TTL); e != nil {
+					timer.Stop()
+					return e
+				}
+				s.LastObservation = o.At
+				queue.Dirty = true
+			}
+		}
+		timer.Stop()
 	}
 	return nil
 }

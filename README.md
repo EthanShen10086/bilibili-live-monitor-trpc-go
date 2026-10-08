@@ -24,3 +24,5 @@ Go 1.26.3 或兼容更高版本。编译后只需 dist/monitor、config.yaml、.
 三个实现的管理服务名相同；选择一个作为后台实例，切换版本前停止旧服务并迁移 SQLite 状态。各仓库的 var/ 不自动共享，也不自动同步代码。原生 Go 入口只运行后台检测；tRPC-Go 入口实际启动框架并提供仅监听回环地址的状态和健康接口。
 
 轮询间隔设置：[分钟级配置和重启步骤](docs/POLLING_INTERVAL.md)。
+
+后台资源优化：[实现说明、Mac 与云端更新步骤](docs/RESOURCE_OPTIMIZATION.md)。保持每 1 分钟轮询。

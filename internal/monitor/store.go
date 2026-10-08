@@ -83,9 +83,14 @@ func (s *Store) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	if o.Live {
 		l = 1
 	}
-	_, e = tx.Exec("INSERT OR REPLACE INTO observations(room,live,start,key) VALUES(?,?,?,?)", o.RoomID, l, nullable(actual), nullable(k))
-	if e != nil {
-		return false, e
+	if e == sql.ErrNoRows || live != l || start.String != actual || key.String != k {
+		_, e = tx.Exec("INSERT OR REPLACE INTO observations(room,live,start,key) VALUES(?,?,?,?)", o.RoomID, l, nullable(actual), nullable(k))
+		if e != nil {
+			return false, e
+		}
+	}
+	if o.Live && live == 1 && key.Valid && key.String == k {
+		return false, tx.Commit()
 	}
 	added := false
 	if k != "" {
@@ -154,4 +159,20 @@ func (s *Store) Counts() (map[string]int, error) {
 		m[k] = n
 	}
 	return m, rows.Err()
+}
+
+func (s *Store) DataVersion() (int64, error) {
+	var v int64
+	e := s.DB.QueryRow("PRAGMA data_version").Scan(&v)
+	return v, e
+}
+func (s *Store) NextWake() (time.Time, error) {
+	var next, expires sql.NullInt64
+	if e := s.DB.QueryRow("SELECT MIN(next),MIN(expires) FROM jobs WHERE status='pending'").Scan(&next, &expires); e != nil {
+		return time.Time{}, e
+	}
+	if !next.Valid {
+		return time.Time{}, nil
+	}
+	return time.UnixMilli(min(next.Int64, expires.Int64)), nil
 }
