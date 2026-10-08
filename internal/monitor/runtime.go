@@ -37,18 +37,8 @@ func Atomic(file string, b []byte) error {
 }
 func Event(root, name string, data any) {
 	file := filepath.Join(root, "var/events.log")
-	if f, e := os.Stat(file); e == nil && f.Size() > 2*1024*1024 {
-		for i := 2; i >= 1; i-- {
-			os.Rename(fmt.Sprintf("%s.%d", file, i), fmt.Sprintf("%s.%d", file, i+1))
-		}
-		os.Rename(file, file+".1")
-	}
 	b, _ := json.Marshal(map[string]any{"time": time.Now().UTC().Format(time.RFC3339Nano), "event": name, "details": data})
-	f, e := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if e == nil {
-		defer f.Close()
-		f.Write(append(b, '\n'))
-	}
+	AppendBoundedLog(file, append(b, '\n'))
 }
 
 // Same directory-lock path/heartbeat timing as Node proper-lockfile.
