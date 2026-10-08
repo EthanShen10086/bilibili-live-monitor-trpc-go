@@ -204,3 +204,37 @@ func TestAdaptivePollingCurrentSentSession(t *testing.T) {
 	}
 	check("awaiting_start")
 }
+
+func TestDeclinedApprovalIdleAndCancellation(t *testing.T) {
+	c := testConfig(t)
+	root := t.TempDir()
+	if e := AtomicJSON(filepath.Join(root, "var/boot-approval.json"), Approval{"test", "declined", time.Now().UnixMilli()}); e != nil {
+		t.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- awaitApproval(ctx, root, c, "test") }()
+	var first Status
+	for i := 0; i < 100; i++ {
+		first, _ = ReadStatus(root)
+		if first.State == "waiting_confirmation" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if first.State != "waiting_confirmation" {
+		t.Fatal(first)
+	}
+	time.Sleep(1200 * time.Millisecond)
+	second, _ := ReadStatus(root)
+	if first.Updated != second.Updated {
+		t.Fatal("waiting approval rewrote status")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("approval did not stop")
+	}
+}

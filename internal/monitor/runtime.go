@@ -157,20 +157,58 @@ func AwaitApproval(ctx context.Context, root string, c Config) error {
 	if e != nil {
 		return e
 	}
+	return awaitApproval(ctx, root, c, boot)
+}
+func awaitApproval(ctx context.Context, root string, c Config, boot string) error {
 	release, e := Lock(root, "boot-confirmation")
 	if e != nil {
 		return e
 	}
 	defer release()
+	writer := StatusWriter{File: filepath.Join(root, "var/status.json")}
+	host, _ := os.Hostname()
+	status := Status{PID: os.Getpid(), Host: host, Running: true, State: "waiting_confirmation", Mode: c.Detector.Mode, HeartbeatSeconds: 10}
+	report := func() error { return writer.Report(&status, time.Now(), false) }
+	defer func() { status.Running = false; status.State = "stopped"; writer.Report(&status, time.Now(), true) }()
 	a := ReadApproval(root)
 	if a.Boot == boot && a.Decision == "approved" {
 		return nil
 	}
 	if a.Boot != boot {
-		host, _ := os.Hostname()
-		AtomicJSON(filepath.Join(root, "var/status.json"), Status{PID: os.Getpid(), Host: host, Running: true, Updated: time.Now().UnixMilli(), State: "waiting_confirmation", Mode: c.Detector.Mode})
+		if e = report(); e != nil {
+			return e
+		}
 		dialog, cancel := context.WithTimeout(ctx, 120*time.Second)
-		out, e := Command(dialog, "/usr/bin/osascript", "-e", `return button returned of (display dialog "是否启用本次电脑启动期间的 B 站开播订阅？确认后登录自启动、崩溃自恢复；下次电脑重启重新确认。" with title "B 站开播订阅" buttons {"暂不启用", "启用"} default button "暂不启用")`)
+		type result struct {
+			out string
+			err error
+		}
+		results := make(chan result, 1)
+		go func() {
+			out, err := Command(dialog, "/usr/bin/osascript", "-e", `return button returned of (display dialog "是否启用本次电脑启动期间的 B 站开播订阅？确认后登录自启动、崩溃自恢复；下次电脑重启重新确认。" with title "B 站开播订阅" buttons {"暂不启用", "启用"} default button "暂不启用")`)
+			results <- result{out, err}
+		}()
+		tick := time.NewTicker(WorkerHeartbeat)
+		var out string
+	prompting:
+		for {
+			select {
+			case r := <-results:
+				out, e = r.out, r.err
+				break prompting
+			case <-ctx.Done():
+				cancel()
+				tick.Stop()
+				return ctx.Err()
+			case <-tick.C:
+				if re := report(); re != nil {
+					cancel()
+					tick.Stop()
+					return re
+				}
+			}
+		}
+		tick.Stop()
 		cancel()
 		decision := "declined"
 		if e == nil && out == "启用" {
@@ -189,11 +227,10 @@ func AwaitApproval(ctx context.Context, root string, c Config) error {
 		if a.Boot == boot && a.Decision == "approved" {
 			return nil
 		}
-		host, _ := os.Hostname()
-		if e = AtomicJSON(filepath.Join(root, "var/status.json"), Status{PID: os.Getpid(), Host: host, Running: true, Updated: time.Now().UnixMilli(), State: "waiting_confirmation", Mode: c.Detector.Mode}); e != nil {
+		if e = report(); e != nil {
 			return e
 		}
-		if e = Pause(ctx, time.Second); e != nil {
+		if e = Pause(ctx, WorkerHeartbeat); e != nil {
 			return e
 		}
 	}
