@@ -10,25 +10,29 @@ import (
 )
 
 type Status struct {
-	OptimizationVersion int    `json:"runtime_optimization_version"`
-	HeartbeatSeconds    int    `json:"heartbeat_interval_seconds"`
-	QueueRefreshes      int    `json:"queue_refreshes"`
-	PollingInterval     int    `json:"polling_interval_seconds"`
-	NextPoll            int64  `json:"next_poll_at,omitempty"`
-	PID                 int    `json:"pid"`
-	Host                string `json:"host"`
-	Instance            string `json:"instance"`
-	Running             bool   `json:"running"`
-	Updated             int64  `json:"updated_at"`
-	Started             int64  `json:"started_at"`
-	Mode                string `json:"mode"`
-	Notification        string `json:"notification"`
-	State               string `json:"detector_state"`
-	InWindow            bool   `json:"in_window"`
-	LastObservation     int64  `json:"last_observation_at,omitempty"`
-	LastSent            int64  `json:"last_sent_at,omitempty"`
-	LastError           string `json:"last_error,omitempty"`
-	Pending             any    `json:"pending"`
+	AdaptiveVersion      int    `json:"adaptive_polling_version"`
+	EffectiveInterval    int    `json:"effective_polling_interval_seconds"`
+	NotifiedLiveInterval int    `json:"notified_live_interval_seconds"`
+	PollingPhase         string `json:"polling_phase"`
+	OptimizationVersion  int    `json:"runtime_optimization_version"`
+	HeartbeatSeconds     int    `json:"heartbeat_interval_seconds"`
+	QueueRefreshes       int    `json:"queue_refreshes"`
+	PollingInterval      int    `json:"polling_interval_seconds"`
+	NextPoll             int64  `json:"next_poll_at,omitempty"`
+	PID                  int    `json:"pid"`
+	Host                 string `json:"host"`
+	Instance             string `json:"instance"`
+	Running              bool   `json:"running"`
+	Updated              int64  `json:"updated_at"`
+	Started              int64  `json:"started_at"`
+	Mode                 string `json:"mode"`
+	Notification         string `json:"notification"`
+	State                string `json:"detector_state"`
+	InWindow             bool   `json:"in_window"`
+	LastObservation      int64  `json:"last_observation_at,omitempty"`
+	LastSent             int64  `json:"last_sent_at,omitempty"`
+	LastError            string `json:"last_error,omitempty"`
+	Pending              any    `json:"pending"`
 }
 
 func ReadStatus(root string) (Status, error) {
@@ -57,6 +61,13 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 	host, _ := os.Hostname()
 	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: time.Now().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
 
+	s.AdaptiveVersion = 1
+	s.EffectiveInterval = c.PollingSeconds()
+	s.NotifiedLiveInterval = c.NotifiedLiveSeconds()
+	s.PollingPhase = "awaiting_start"
+	if c.Detector.Mode == "official" {
+		s.PollingPhase = "official"
+	}
 	s.OptimizationVersion = 1
 	s.HeartbeatSeconds = int(WorkerHeartbeat / time.Second)
 	queue := QueueSchedule{Store: db, Dirty: true}
@@ -72,6 +83,25 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 	defer func() { s.Running = false; s.State = "stopped"; writer.Report(&s, time.Now(), true) }()
 	notify := Feishu{Config: c, HTTP: h}
 	var next time.Time
+	var currentRoomID int64
+	currentInterval := c.PollingSeconds()
+	updateCadence := func() (bool, error) {
+		if c.Detector.Mode != "polling" || currentRoomID == 0 || !c.InWindow(time.Now()) {
+			return false, nil
+		}
+		phase, err := db.PollingPhase(currentRoomID)
+		if err != nil {
+			return false, err
+		}
+		interval := c.PollingSeconds()
+		if phase == "notified_live" {
+			interval = c.NotifiedLiveSeconds()
+		}
+		changed := interval != currentInterval
+		currentInterval = interval
+		s.PollingPhase, s.EffectiveInterval = phase, interval
+		return changed, nil
+	}
 	failures := 0
 	wasWindow := false
 	catchup := true
@@ -105,6 +135,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				continue
 			}
 			s.State = "outside_window"
+			s.PollingPhase = "outside_window"
 			wasWindow = false
 			catchup = true
 			next = time.Time{}
@@ -112,6 +143,11 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 			if !wasWindow {
 				catchup = true
 				next = time.Time{}
+				if c.Detector.Mode == "polling" {
+					currentInterval = c.PollingSeconds()
+					s.PollingPhase = "awaiting_start"
+					s.EffectiveInterval = currentInterval
+				}
 			}
 			wasWindow = true
 			if c.Detector.Mode == "polling" {
@@ -125,7 +161,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							s.State = "blocked"
 						}
 						s.LastError = err.Error()
-						next = time.Now().Add(Backoff(failures, c.PollingSeconds()))
+						next = time.Now().Add(Backoff(failures, currentInterval))
 						Event(root, "detector_error", s.LastError)
 					} else {
 						if ctx.Err() == nil && c.InWindow(time.Now()) {
@@ -137,11 +173,15 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							catchup = false
 							s.LastObservation = o.At
 							queue.Dirty = queue.Dirty || added
+							currentRoomID = o.RoomID
+							if _, e = updateCadence(); e != nil {
+								return e
+							}
 						}
 						failures = 0
 						s.State = "healthy"
 						s.LastError = ""
-						next = time.Now().Add(time.Duration(c.PollingSeconds()) * time.Second)
+						next = time.Now().Add(time.Duration(currentInterval) * time.Second)
 					}
 				}
 			} else {
@@ -252,6 +292,13 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 			if err == nil {
 				if e = db.Sent(job.Key); e != nil {
 					return e
+				}
+				changed, ce := updateCadence()
+				if ce != nil {
+					return ce
+				}
+				if changed && window {
+					next = time.Now().Add(time.Duration(currentInterval) * time.Second)
 				}
 				s.LastSent = time.Now().UnixMilli()
 				Event(root, "notice_sent", map[string]any{"key": job.Key, "sent_at": s.LastSent})

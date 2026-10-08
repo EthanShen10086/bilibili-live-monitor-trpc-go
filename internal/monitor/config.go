@@ -19,9 +19,10 @@ type Config struct {
 	Detector struct {
 		Mode    string `yaml:"mode"`
 		Polling struct {
-			Interval        *int `yaml:"interval_seconds,omitempty"`
-			IntervalMinutes *int `yaml:"interval_minutes,omitempty"`
-			Timeout         int  `yaml:"timeout_seconds"`
+			Interval            *int `yaml:"interval_seconds,omitempty"`
+			IntervalMinutes     *int `yaml:"interval_minutes,omitempty"`
+			NotifiedLiveMinutes *int `yaml:"notified_live_interval_minutes,omitempty"`
+			Timeout             int  `yaml:"timeout_seconds"`
 		} `yaml:"polling"`
 		Official struct {
 			AppID     string `yaml:"app_id_env"`
@@ -128,6 +129,9 @@ func minutes(s string) (int, error) {
 	return h*60 + m, nil
 }
 func (c Config) Validate() error {
+	if v := c.Detector.Polling.NotifiedLiveMinutes; v != nil && (*v < 1 || *v > 60) {
+		return fmt.Errorf("notified_live_interval_minutes must be 1..60")
+	}
 	if c.Subscription.RoomID <= 0 {
 		return fmt.Errorf("invalid room_id")
 	}
@@ -241,4 +245,12 @@ func (c Config) PollingSeconds() int {
 		return *c.Detector.Polling.Interval
 	}
 	return 0
+}
+
+func (c Config) NotifiedLiveSeconds() int {
+	minutes := 5
+	if c.Detector.Polling.NotifiedLiveMinutes != nil {
+		minutes = *c.Detector.Polling.NotifiedLiveMinutes
+	}
+	return max(c.PollingSeconds(), minutes*60)
 }

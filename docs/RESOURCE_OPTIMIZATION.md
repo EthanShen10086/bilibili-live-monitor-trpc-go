@@ -41,3 +41,31 @@
 Node：`npm test`。Go / tRPC-Go：`go test -race ./...`、`go vet ./...`；构建后执行仓库的进程冒烟脚本。合集为 `python3 scripts/smoke-go.py`，独立 Go 仓库为 `python3 scripts/smoke.py`。
 
 新增测试覆盖稳定状态写入节流、SQLite 外部提交/手动重试、TTL 早于重试的唤醒、相同场次零更新、空闲真实进程停止和锁释放。Node 还覆盖停止信号提前唤醒、分钟轮询间隔、失败重试和跨进程重启去重。测试使用临时数据库和模拟网络，不发送真实飞书消息。
+
+## 本场发送成功后的检测频率
+
+2026-10-08 新增了按当前场次发送状态调整频率，前一版只有状态写入、数据库与空闲调度优化。
+
+```yaml
+detector:
+  mode: polling
+  polling:
+    interval_minutes: 1
+    notified_live_interval_minutes: 5
+    timeout_seconds: 5
+```
+
+- 未直播：每 1 分钟检测，发现开播立即持久化并发送通知。
+- 直播中、当前场次通知未成功：继续每 1 分钟检测，发送队列按自己的退避时间重试。业务错误、永久失败和过期任务都不算发送成功。
+- 飞书接口确认成功且 SQLite 记录本场 `sent`：改为每 5 分钟确认直播状态，持续直播和改标题不会重复发消息。
+- 观测到下播：恢复 1 分钟，等待下一场；即使漏掉下播，只要平台返回新的稳定开播时间，也会识别新场次并再次通知。
+- 重启：先立即确认一次房间状态，再按 SQLite 中当前场次的发送记录恢复频率，不靠内存中的“已发送”标志。
+- 窗口结束：仍停止 B站查询，保留未过期任务的发送重试。官方事件模式继续使用事件与心跳，不应用轮询降频。
+
+`notified_live_interval_minutes` 可配置 1–60，省略时默认为 5；实际低频间隔取它与正常间隔中的较大值。两个值相同即关闭降频。兼容原有 `interval_seconds`，它与 `interval_minutes` 仍互斥。
+
+状态文件新增 `adaptive_polling_version: 1`、`polling_phase`、`effective_polling_interval_seconds`、`notified_live_interval_seconds`。原有 `polling_interval_seconds` 保留正常间隔，不因降频变成 300。`next_poll_at` 显示实际下一次查询时间。下播后的阶段是 `awaiting_start`，通知未成功是 `awaiting_notification`，成功后持续直播为 `notified_live`；窗口外为 `outside_window`。
+
+降频阶段的 B站查询次数约减少 80%，不代表整周请求或机器总耗电减少 80%。低频确认可能让下播或下播后快速重开的识别延迟达到约 5 分钟；缺少稳定场次时间时，两次查询之间完整发生的下播重开仍可能漏掉。飞书 API 成功不等于手机已经弹出提醒；服务没有手机送达回执。GitHub 仓库保存代码，常驻监测仍由 Mac 或云服务器实例承担。
+
+Mac 更新后必须重启服务。当前工作区提供 `outputs/update-adaptive-polling.command`，核验新 PID、正常 60 秒、通知成功后 300 秒及自适应版本标记，并核对四个远程仓库。云端沿用前文的构建、systemd 重启和状态核验步骤。

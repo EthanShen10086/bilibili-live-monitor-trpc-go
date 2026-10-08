@@ -145,3 +145,62 @@ func TestIdleWorkerStableStatusAndPromptShutdown(t *testing.T) {
 		t.Fatal("shutdown blocked on idle timer")
 	}
 }
+
+func TestAdaptivePollingCurrentSentSession(t *testing.T) {
+	c := testConfig(t)
+	if c.NotifiedLiveSeconds() != 300 {
+		t.Fatal(c.NotifiedLiveSeconds())
+	}
+	ten := 10
+	c.Detector.Polling.IntervalMinutes = &ten
+	if c.NotifiedLiveSeconds() != 600 {
+		t.Fatal("slowing must not increase frequency")
+	}
+	zero := 0
+	c.Detector.Polling.NotifiedLiveMinutes = &zero
+	if c.Validate() == nil {
+		t.Fatal("invalid adaptive interval accepted")
+	}
+	db, e := OpenStore(filepath.Join(t.TempDir(), "state.sqlite"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.DB.Close()
+	check := func(expected string) {
+		t.Helper()
+		phase, e := db.PollingPhase(1)
+		if e != nil || phase != expected {
+			t.Fatal(phase, e)
+		}
+	}
+	check("awaiting_start")
+	o := Observation{RoomID: 1, Live: true, Start: "2026-10-08T10:00:00.000Z", At: 1000}
+	if _, e = db.Observe(o, true, 30); e != nil {
+		t.Fatal(e)
+	}
+	check("awaiting_notification")
+	job, e := db.Due(time.UnixMilli(1001))
+	if e != nil || job == nil {
+		t.Fatal(e)
+	}
+	if e = db.Failed(job, &RemoteError{"Feishu", "fail", false}, time.UnixMilli(1002)); e != nil {
+		t.Fatal(e)
+	}
+	check("awaiting_notification")
+	if e = db.Sent(job.Key); e != nil {
+		t.Fatal(e)
+	}
+	check("notified_live")
+	o.Start = "2026-10-08T11:00:00.000Z"
+	o.At = 2000
+	if _, e = db.Observe(o, false, 30); e != nil {
+		t.Fatal(e)
+	}
+	check("awaiting_notification")
+	o.Live = false
+	o.At = 3000
+	if _, e = db.Observe(o, false, 30); e != nil {
+		t.Fatal(e)
+	}
+	check("awaiting_start")
+}

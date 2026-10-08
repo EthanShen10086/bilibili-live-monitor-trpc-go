@@ -176,3 +176,22 @@ func (s *Store) NextWake() (time.Time, error) {
 	}
 	return time.UnixMilli(min(next.Int64, expires.Int64)), nil
 }
+
+func (s *Store) PollingPhase(room int64) (string, error) {
+	var live int
+	var status sql.NullString
+	e := s.DB.QueryRow("SELECT o.live,j.status FROM observations o LEFT JOIN jobs j ON o.key=j.key WHERE o.room=?", room).Scan(&live, &status)
+	if e == sql.ErrNoRows {
+		return "awaiting_start", nil
+	}
+	if e != nil {
+		return "", e
+	}
+	if live != 1 {
+		return "awaiting_start", nil
+	}
+	if status.String == "sent" {
+		return "notified_live", nil
+	}
+	return "awaiting_notification", nil
+}

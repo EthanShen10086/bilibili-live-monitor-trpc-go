@@ -3,7 +3,8 @@ subscription:
 detector:
   mode: polling
   polling:
-    interval_minutes: 1  # 每次查询结束后等待 1 分钟；可设 1–60
+    interval_minutes: 1  # 未开播或本场通知未成功时，查询结束后等待 1 分钟；可设 1–60
+    notified_live_interval_minutes: 5  # 本场通知成功后低频确认直播状态；下播后恢复正常间隔
     timeout_seconds: 5
   official:
     app_id_env: BILI_APP_ID

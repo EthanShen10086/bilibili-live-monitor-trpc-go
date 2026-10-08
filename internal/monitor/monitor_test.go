@@ -307,6 +307,10 @@ func TestWorkerDurableSendAndRestart(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
+		state, se := ReadStatus(root)
+		if se != nil || state.PollingPhase != "notified_live" || state.EffectiveInterval != 300 || state.NextPoll-state.LastObservation < 300000 {
+			t.Fatal("adaptive state after send/restart", state, se)
+		}
 	}
 	if sends.Load() != 1 {
 		t.Fatal("duplicate after restart", sends.Load())
@@ -381,5 +385,30 @@ func TestMinuteWorkerSchedulesWithoutRepeatedQueries(t *testing.T) {
 	status, e := ReadStatus(root)
 	if e != nil || status.PollingInterval != 60 || status.NextPoll-status.LastObservation < 60000 {
 		t.Fatal(status, e)
+	}
+}
+
+func TestWorkerSendFailureKeepsFastPolling(t *testing.T) {
+	c := testConfig(t)
+	c.Schedule.Weekdays = []int{1, 2, 3, 4, 5, 6, 7}
+	c.Schedule.Start = "00:00"
+	c.Schedule.End = "24:00"
+	t.Setenv(c.Notification.Group.Webhook, "https://open.feishu.cn/open-apis/bot/v2/hook/test")
+	t.Setenv(c.Notification.Group.Secret, "unit")
+	h := mockHTTP(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "api.live.bilibili.com" {
+			return response(`{"code":0,"data":{"room_id":11163068,"short_id":1616,"live_status":1,"title":"test","live_time":"2026-10-04 20:00:00"}}`, 200), nil
+		}
+		return response("retry", 503), nil
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	root := t.TempDir()
+	if e := Run(ctx, root, c, h); e != nil {
+		t.Fatal(e)
+	}
+	s, e := ReadStatus(root)
+	if e != nil || s.PollingPhase != "awaiting_notification" || s.EffectiveInterval != 60 || s.LastSent != 0 {
+		t.Fatal(s, e)
 	}
 }
