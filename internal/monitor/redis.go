@@ -2,9 +2,11 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -48,8 +50,9 @@ func (c *MemoryCache) Put(_ context.Context, k string, b []byte, ttl time.Durati
 func (c *MemoryCache) Close() error { return nil }
 
 type RedisCache struct {
-	Client *redis.Client
-	Prefix string
+	Client        *redis.Client
+	Prefix        string
+	disabledUntil atomic.Int64
 }
 
 func redisClient(c Config) (*redis.Client, error) {
@@ -81,24 +84,32 @@ func OpenCache(c Config) (Cache, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &RedisCache{client, "live-monitor:" + c.Platform.SubscriptionID + ":cache:"}, nil
+	return &RedisCache{Client: client, Prefix: "live-monitor:" + c.Platform.SubscriptionID + ":cache:"}, nil
 }
 func (c *RedisCache) Get(ctx context.Context, k string) ([]byte, bool) {
-	cc, cancel := context.WithTimeout(ctx, time.Second)
+	if time.Now().UnixMilli() < c.disabledUntil.Load() {
+		return nil, false
+	}
+	cc, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 	b, e := c.Client.Get(cc, c.Prefix+k).Bytes()
+	if e != nil && !errors.Is(e, redis.Nil) {
+		c.disabledUntil.Store(time.Now().Add(5 * time.Second).UnixMilli())
+	}
 	if e != nil || len(b) > 64*1024 {
 		return nil, false
 	}
 	return b, true
 }
 func (c *RedisCache) Put(ctx context.Context, k string, b []byte, ttl time.Duration) {
-	if len(b) > 64*1024 {
+	if len(b) > 64*1024 || time.Now().UnixMilli() < c.disabledUntil.Load() {
 		return
 	}
-	cc, cancel := context.WithTimeout(ctx, time.Second)
+	cc, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
-	c.Client.Set(cc, c.Prefix+k, b, ttl)
+	if c.Client.Set(cc, c.Prefix+k, b, ttl).Err() != nil {
+		c.disabledUntil.Store(time.Now().Add(5 * time.Second).UnixMilli())
+	}
 }
 func (c *RedisCache) Close() error { return c.Client.Close() }
 

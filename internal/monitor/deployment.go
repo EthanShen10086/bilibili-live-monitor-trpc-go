@@ -38,7 +38,7 @@ func ServiceFiles(root, exe string) (string, string) {
 	for _, v := range args {
 		plist += `<string>` + html.EscapeString(v) + `</string>`
 	}
-	plist += `</array><key>WorkingDirectory</key><string>` + html.EscapeString(root) + `</string><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>20</integer><key>ExitTimeOut</key><integer>45</integer><key>StandardOutPath</key><string>` + html.EscapeString(filepath.Join(root, "var/service.log")) + `</string><key>StandardErrorPath</key><string>` + html.EscapeString(filepath.Join(root, "var/error.log")) + `</string></dict></plist>`
+	plist += `</array><key>WorkingDirectory</key><string>` + html.EscapeString(root) + `</string><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>20</integer><key>ExitTimeOut</key><integer>80</integer><key>StandardOutPath</key><string>` + html.EscapeString(filepath.Join(root, "var/service.log")) + `</string><key>StandardErrorPath</key><string>` + html.EscapeString(filepath.Join(root, "var/error.log")) + `</string></dict></plist>`
 	unit := "[Unit]\nDescription=Bilibili live subscription monitor (Go)\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n[Service]\nType=simple\nWorkingDirectory=" + unitQuote(root) + "\nExecStart=" + unitQuote(exe) + " --root " + unitQuote(root) + " run --managed cloud\nRestart=on-failure\nRestartSec=20\nTimeoutStopSec=80\nUMask=0077\nNoNewPrivileges=true\n\n[Install]\nWantedBy=default.target\n"
 	return plist, unit
 }

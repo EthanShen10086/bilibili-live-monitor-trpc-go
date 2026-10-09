@@ -136,7 +136,7 @@ func (s *Store) Failed(j *Job, err error, now time.Time) error {
 	if Retryable(err) {
 		state = "pending"
 	}
-	_, e := s.DB.Exec("UPDATE jobs SET status=?,attempts=attempts+1,next=?,last_error=? WHERE key=?", state, now.Add(Backoff(j.Attempts+1, 5)).UnixMilli(), err.Error(), j.Key)
+	_, e := s.DB.Exec("UPDATE jobs SET status=?,attempts=attempts+1,next=?,last_error=? WHERE key=?", state, now.Add(RetryDelay(err, j.Attempts+1, 5)).UnixMilli(), err.Error(), j.Key)
 	return e
 }
 func (s *Store) Retry(now time.Time) (int64, error) {

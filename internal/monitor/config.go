@@ -1,7 +1,9 @@
 package monitor
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -78,8 +80,14 @@ func Load(root string) (Config, error) {
 	if e != nil {
 		return c, e
 	}
-	if e = yaml.Unmarshal(b, &c); e != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(b))
+	decoder.KnownFields(true)
+	if e = decoder.Decode(&c); e != nil {
 		return c, fmt.Errorf("invalid YAML")
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return c, fmt.Errorf("config.yaml must contain one YAML document")
 	}
 	if e = LoadEnv(root); e != nil {
 		return c, e

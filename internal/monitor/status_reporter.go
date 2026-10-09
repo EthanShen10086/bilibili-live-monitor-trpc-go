@@ -26,7 +26,7 @@ func newStatusReporter(file string) *statusReporter {
 				return
 			case now := <-tick.C:
 				r.mu.Lock()
-				if r.snapshot.Running {
+				if r.snapshot.Running && r.err == nil {
 					r.err = r.writer.Report(&r.snapshot, now, false)
 				}
 				r.mu.Unlock()

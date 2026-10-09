@@ -136,11 +136,11 @@ func TestQueueTTLAndRetry(t *testing.T) {
 	if j != nil {
 		t.Fatal("retry early")
 	}
-	j, _ = s.Due(time.UnixMilli(6000))
+	j, _ = s.Due(time.UnixMilli(7000))
 	if j == nil || j.Attempts != 1 {
 		t.Fatal("retry missing")
 	}
-	s.Failed(j, &RemoteError{"Feishu", "19024", false}, time.UnixMilli(6000))
+	s.Failed(j, &RemoteError{"Feishu", "19024", false}, time.UnixMilli(7000))
 	n, _ := s.Retry(time.UnixMilli(7000))
 	if n != 1 {
 		t.Fatal("failed retry")

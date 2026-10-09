@@ -278,7 +278,7 @@ func (s *PostgresStore) Failed(j *Job, e error, now time.Time) error {
 	if Retryable(e) {
 		status = "pending"
 	}
-	return s.Complete(j.Key, status, e.Error(), now.Add(Backoff(j.Attempts+1, 5)).UnixMilli(), true)
+	return s.Complete(j.Key, status, e.Error(), now.Add(RetryDelay(e, j.Attempts+1, 5)).UnixMilli(), true)
 }
 func (s *PostgresStore) Retry(now time.Time) (int64, error) {
 	cc, cancel := s.timeout()
