@@ -1,0 +1,17 @@
+CREATE TABLE ep_tenants(id text PRIMARY KEY,name text NOT NULL,max_subscriptions integer NOT NULL CHECK(max_subscriptions BETWEEN 1 AND 10000),max_targets integer NOT NULL CHECK(max_targets BETWEEN 1 AND 10000));
+CREATE TABLE ep_members(tenant_id text REFERENCES ep_tenants(id),subject text NOT NULL,role text NOT NULL CHECK(role IN ('owner','admin','operator','viewer')),PRIMARY KEY(tenant_id,subject));
+CREATE TABLE ep_targets(tenant_id text REFERENCES ep_tenants(id),id text NOT NULL,name text NOT NULL,kind text NOT NULL,credentials text NOT NULL,version bigint NOT NULL DEFAULT 1,PRIMARY KEY(tenant_id,id));
+CREATE TABLE ep_subscriptions(tenant_id text REFERENCES ep_tenants(id),id text NOT NULL,room bigint NOT NULL CHECK(room>0),enabled boolean NOT NULL,policy jsonb NOT NULL,version bigint NOT NULL DEFAULT 1,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(tenant_id,id));
+CREATE TABLE ep_subscription_targets(tenant_id text,id text,target_id text,PRIMARY KEY(tenant_id,id,target_id),FOREIGN KEY(tenant_id,id) REFERENCES ep_subscriptions(tenant_id,id),FOREIGN KEY(tenant_id,target_id) REFERENCES ep_targets(tenant_id,id));
+CREATE INDEX ep_subscriptions_room ON ep_subscriptions(room) WHERE enabled;
+CREATE TABLE ep_audit(id bigserial PRIMARY KEY,tenant_id text NOT NULL,subject text NOT NULL,action text NOT NULL,resource_id text NOT NULL,at timestamptz NOT NULL DEFAULT clock_timestamp());
+CREATE TABLE ep_rooms(room bigint PRIMARY KEY,observation jsonb,session_key text NOT NULL DEFAULT '',owner text NOT NULL DEFAULT '',lease_until timestamptz,next_probe timestamptz NOT NULL DEFAULT clock_timestamp());
+CREATE TABLE ep_events(id text PRIMARY KEY,room bigint NOT NULL,session_key text NOT NULL,type text NOT NULL,at timestamptz NOT NULL,envelope jsonb NOT NULL,published boolean NOT NULL DEFAULT false,UNIQUE(room,session_key,type));
+CREATE INDEX ep_events_outbox ON ep_events(at) WHERE NOT published;
+CREATE TABLE ep_jobs(id text PRIMARY KEY,tenant_id text NOT NULL,subscription_id text NOT NULL,target_id text NOT NULL,event_id text NOT NULL,state text NOT NULL CHECK(state IN ('pending','sending','sent','failed','expired','disabled')),text text NOT NULL,attempts integer NOT NULL DEFAULT 0,next timestamptz NOT NULL,expires timestamptz NOT NULL,owner text NOT NULL DEFAULT '',lease_until timestamptz,sent_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),UNIQUE(tenant_id,subscription_id,target_id,event_id),FOREIGN KEY(tenant_id,subscription_id) REFERENCES ep_subscriptions(tenant_id,id),FOREIGN KEY(tenant_id,target_id) REFERENCES ep_targets(tenant_id,id));
+CREATE INDEX ep_jobs_due ON ep_jobs(next) WHERE state IN ('pending','sending');
+CREATE TABLE ep_consumed(consumer text,event_id text,at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(consumer,event_id));
+CREATE TABLE ep_projection_events(room bigint,event_id text,session_key text,type text,at timestamptz,observation jsonb,PRIMARY KEY(event_id));
+CREATE TABLE ep_deadletters(consumer text,event_id text,reason text NOT NULL,at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(consumer,event_id));
+CREATE TABLE ep_replays(id text PRIMARY KEY,tenant_id text REFERENCES ep_tenants(id),from_at timestamptz,to_at timestamptz,state text NOT NULL,processed bigint NOT NULL DEFAULT 0,created_at timestamptz NOT NULL DEFAULT clock_timestamp());
+CREATE TABLE ep_imports(source_id text PRIMARY KEY,tenant_id text NOT NULL,subscription_id text NOT NULL,at timestamptz NOT NULL DEFAULT clock_timestamp());
