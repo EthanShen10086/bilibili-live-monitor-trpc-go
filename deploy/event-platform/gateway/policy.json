@@ -1,0 +1,13 @@
+{
+  "api_prefix": "/api/v1/",
+  "auth_endpoint": "http://api:8800/internal/auth",
+  "body_bytes": 65536,
+  "requests_per_second": 10,
+  "burst": 20,
+  "connect_seconds": 3,
+  "read_seconds": 12,
+  "retries": 0,
+  "strip_headers": ["X-User", "X-User-ID", "X-Tenant", "X-Tenant-ID", "X-Roles", "X-Authenticated-Subject"],
+  "public_hosts": ["api", "auth", "grafana"],
+  "private_paths": ["/internal/auth", "/metrics", "/readyz", "/livez", "/admin"]
+}

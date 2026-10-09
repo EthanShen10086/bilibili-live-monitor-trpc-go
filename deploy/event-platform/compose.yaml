@@ -1,0 +1,283 @@
+name: live-event-platform
+x-platform: &platform
+  build:
+    context: ../..
+    dockerfile: deploy/event-platform/Dockerfile
+  image: live-event-platform:${RELEASE_REVISION:-local}
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  mem_limit: 256m
+  cpus: 0.5
+  stop_grace_period: 45s
+  environment: &env
+    EVENT_POSTGRES_DSN: postgres://platform:${PG_PASSWORD:?required}@postgres:5432/platform?sslmode=disable
+    EVENT_CREDENTIAL_KEY_ID: ${EVENT_CREDENTIAL_KEY_ID:?required}
+    EVENT_CREDENTIAL_KEYS: ${EVENT_CREDENTIAL_KEYS:?required}
+    EVENT_OIDC_ISSUER: https://${AUTH_HOST:-auth.localhost}/realms/live
+    EVENT_OIDC_AUDIENCE: live-api
+    EVENT_ADMIN_SUBJECTS: ${EVENT_ADMIN_SUBJECTS:-}
+    EVENT_KAFKA_BROKERS: kafka:9092
+    EVENT_KAFKA_TOPIC: live.events.v1
+    EVENT_SMTP_ALLOWED_HOSTS: ${EVENT_SMTP_ALLOWED_HOSTS:-}
+    EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-90}
+    EVENT_TRACING: 'true'
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+    SSL_CERT_FILE: /certs/ca.crt
+  volumes:
+    - ${TLS_DIR:?required}/ca.crt:/certs/ca.crt:ro
+  networks: [backend]
+  depends_on:
+    migrate: {condition: service_completed_successfully}
+  healthcheck:
+    test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:8800/readyz']
+    interval: 15s
+    timeout: 3s
+    retries: 4
+    start_period: 90s
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_DB: platform
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?required}
+    volumes: [postgres:/var/lib/postgresql/data]
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 384m
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U platform -d platform']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  keycloak-db:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_DB: keycloak
+      POSTGRES_PASSWORD: ${KC_PG_PASSWORD:?required}
+    volumes: [keycloak-db:/var/lib/postgresql/data]
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 256m
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U keycloak -d keycloak']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0
+    command: [start, --import-realm]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KC_PG_PASSWORD:?required}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:-bootstrap-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:?required}
+      KC_HOSTNAME: https://${AUTH_HOST:-auth.localhost}
+      KC_HTTP_ENABLED: 'true'
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: 'true'
+      JAVA_OPTS_KC_HEAP: -XX:MaxRAMPercentage=65
+    volumes: [./generated/realm.json:/opt/keycloak/data/import/realm.json:ro]
+    networks: [backend]
+    depends_on:
+      keycloak-db: {condition: service_healthy}
+    restart: unless-stopped
+    mem_limit: 768m
+  kafka:
+    image: apache/kafka:4.1.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    volumes: [kafka:/var/lib/kafka/data]
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 1024m
+    healthcheck:
+      test: [CMD, /opt/kafka/bin/kafka-topics.sh, --bootstrap-server, kafka:9092, --list]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+  kafka-init:
+    image: apache/kafka:4.1.1
+    entrypoint: [sh, /etc/live/kafka-init.sh]
+    environment:
+      KAFKA_RETENTION_MS: ${KAFKA_RETENTION_MS:-604800000}
+    volumes: [./kafka-init.sh:/etc/live/kafka-init.sh:ro]
+    networks: [backend]
+    depends_on:
+      kafka: {condition: service_healthy}
+    mem_limit: 384m
+  migrate:
+    <<: *platform
+    command: [--role, migrate]
+    restart: 'no'
+    healthcheck: {disable: true}
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    <<: *platform
+    command: [--role, api]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      keycloak: {condition: service_started}
+  detector:
+    <<: *platform
+    command: [--role, detector]
+  relay:
+    <<: *platform
+    command: [--role, relay]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      kafka-init: {condition: service_completed_successfully}
+  router:
+    <<: *platform
+    command: [--role, router]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      kafka-init: {condition: service_completed_successfully}
+  sender:
+    <<: *platform
+    command: [--role, sender]
+  analytics:
+    <<: *platform
+    command: [--role, analytics]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      kafka-init: {condition: service_completed_successfully}
+  apisix:
+    image: apache/apisix:3.19.0-debian
+    profiles: [apisix]
+    ports: ['443:443']
+    volumes:
+      - ./gateway/apisix-config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./generated/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    networks:
+      backend:
+        aliases: ["${API_HOST:-api.localhost}", "${AUTH_HOST:-auth.localhost}", "${GRAFANA_HOST:-grafana.localhost}"]
+    restart: unless-stopped
+    mem_limit: 384m
+    depends_on:
+      api: {condition: service_started}
+      keycloak: {condition: service_started}
+      grafana: {condition: service_started}
+  nginx:
+    image: nginx:1.28.0-alpine
+    profiles: [nginx]
+    ports: ['443:443']
+    volumes:
+      - ./generated/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_DIR:?required}:/certs:ro
+    networks:
+      backend:
+        aliases: ["${API_HOST:-api.localhost}", "${AUTH_HOST:-auth.localhost}", "${GRAFANA_HOST:-grafana.localhost}"]
+    restart: unless-stopped
+    mem_limit: 64m
+    depends_on:
+      api: {condition: service_started}
+      keycloak: {condition: service_started}
+      grafana: {condition: service_started}
+  alloy:
+    image: grafana/alloy:v1.20.1
+    profiles: [observability]
+    user: '0:0'
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345]
+    volumes:
+      - ./observability/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - alloy:/var/lib/alloy
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 256m
+  loki:
+    image: grafana/loki:3.7.8
+    profiles: [observability]
+    command: [-config.file=/etc/loki/config.yaml, -config.expand-env=true]
+    environment: {LOG_RETENTION: "${LOG_RETENTION:-336h}"}
+    volumes: [./observability/loki.yaml:/etc/loki/config.yaml:ro, 'loki:/loki']
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 384m
+  tempo:
+    image: grafana/tempo:2.8.2
+    profiles: [observability]
+    command: [-config.file=/etc/tempo/config.yaml, -config.expand-env=true]
+    environment: {TRACE_RETENTION: "${TRACE_RETENTION:-168h}"}
+    volumes: [./observability/tempo.yaml:/etc/tempo/config.yaml:ro, 'tempo:/var/tempo']
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 384m
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    profiles: [observability]
+    command: [--config.file=/etc/prometheus/prometheus.yaml, '--storage.tsdb.retention.time=${METRIC_RETENTION:-30d}']
+    volumes: [./observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro, ./observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro, 'prometheus:/prometheus']
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 384m
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    profiles: [observability]
+    command: [--config.file=/etc/alertmanager/config.yaml]
+    volumes: [./observability/alertmanager.yaml:/etc/alertmanager/config.yaml:ro, 'alertmanager:/alertmanager']
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 128m
+  grafana:
+    image: grafana/grafana:13.2.3
+    environment:
+      GF_SERVER_ROOT_URL: https://${GRAFANA_HOST:-grafana.localhost}
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_AUTH_GENERIC_OAUTH_ENABLED: 'true'
+      GF_AUTH_GENERIC_OAUTH_NAME: Operations Keycloak
+      GF_AUTH_GENERIC_OAUTH_CLIENT_ID: grafana
+      GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: ${GRAFANA_OIDC_SECRET:?required}
+      GF_AUTH_GENERIC_OAUTH_AUTH_URL: https://${AUTH_HOST:-auth.localhost}/realms/live/protocol/openid-connect/auth
+      GF_AUTH_GENERIC_OAUTH_TOKEN_URL: https://${AUTH_HOST:-auth.localhost}/realms/live/protocol/openid-connect/token
+      GF_AUTH_GENERIC_OAUTH_API_URL: https://${AUTH_HOST:-auth.localhost}/realms/live/protocol/openid-connect/userinfo
+      GF_AUTH_GENERIC_OAUTH_SCOPES: openid profile email
+      GF_AUTH_GENERIC_OAUTH_ALLOWED_GROUPS: operations
+      GF_AUTH_GENERIC_OAUTH_GROUPS_ATTRIBUTE_PATH: groups
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "contains(groups[*], 'operations') && 'Editor'"
+      GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: 'true'
+      GF_AUTH_GENERIC_OAUTH_ALLOW_SIGN_UP: 'true'
+      GF_AUTH_GENERIC_OAUTH_TLS_CLIENT_CA: /certs/ca.crt
+    volumes:
+      - grafana:/var/lib/grafana
+      - ./observability/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/dashboards:/var/lib/grafana/dashboards:ro
+      - ${TLS_DIR:?required}/ca.crt:/certs/ca.crt:ro
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 384m
+
+networks:
+  backend: {}
+volumes:
+  postgres: {}
+  keycloak-db: {}
+  kafka: {}
+
+  alloy: {}
+  loki: {}
+  tempo: {}
+  prometheus: {}
+  alertmanager: {}
+  grafana: {}

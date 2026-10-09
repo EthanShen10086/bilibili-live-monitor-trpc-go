@@ -36,3 +36,10 @@ Go 1.26.9 或兼容更高版本。编译后只需 dist/monitor、config.yaml、.
 上线前改造、组件选型、健康探针、Prometheus/OTLP、备份恢复与验收：[生产就绪手册](docs/PRODUCTION_READINESS.md)。
 
 多人开发入口：[协作、代码风格、测试和 Git 门禁](CONTRIBUTING.md)。首次运行 `make tools && make hooks`，提交前检查 `make verify`。
+
+多租户事件平台使用独立 `event-platform` 入口，提供共享房间检测、PostgreSQL
+事务 Outbox、Kafka、飞书/SMTP、多渠道任务、Keycloak 管理 API、统计与只读回放。
+公网入口默认 APISIX，可替换为 Nginx；配套 Alloy、Loki、Prometheus、Tempo、
+Grafana 和 Alertmanager。启用平台需要显式部署，不改变原 CLI 的运行模式。
+见 [平台部署](deploy/event-platform/README.md)、[SQLite 迁移](docs/event-platform/MIGRATION.md)
+和 [OpenAPI](docs/event-platform/openapi.json)。Compose 用于单机学习与验收，不能视为生产高可用部署。

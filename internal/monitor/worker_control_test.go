@@ -16,6 +16,7 @@ func TestStatusHeartbeatThrottle(t *testing.T) {
 		t.Fatal(e)
 	}
 	for i := 1; i < 10; i++ {
+		s.Progress = now.Add(time.Duration(i) * time.Second).UnixMilli()
 		if e := w.Report(&s, now.Add(time.Duration(i)*time.Second), false); e != nil {
 			t.Fatal(e)
 		}

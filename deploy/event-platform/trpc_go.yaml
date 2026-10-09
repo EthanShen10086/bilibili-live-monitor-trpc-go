@@ -1,0 +1,22 @@
+global:
+  namespace: Platform
+server:
+  app: live
+  server: platform
+  max_close_wait_time: 45000
+  admin:
+    ip: 127.0.0.1
+    port: 8801
+  service:
+    - name: trpc.live.platform.API
+      ip: 0.0.0.0
+      port: 8800
+      network: tcp
+      protocol: http
+      timeout: 12000
+plugins:
+  log:
+    default:
+      - writer: console
+        level: info
+        formatter: json

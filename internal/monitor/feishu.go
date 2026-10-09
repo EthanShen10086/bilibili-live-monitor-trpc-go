@@ -40,11 +40,20 @@ func FormatNotice(n Notice, room int64) string {
 }
 
 type Feishu struct {
-	Config  Config
-	HTTP    *HTTP
+	Config Config
+	HTTP   *HTTP
+	// Lookup resolves instance-local credentials. Nil retains legacy environment lookup.
+	Lookup  func(string) string
 	mu      sync.Mutex
 	token   string
 	expires time.Time
+}
+
+func (f *Feishu) credential(name string) string {
+	if f.Lookup != nil {
+		return f.Lookup(name)
+	}
+	return os.Getenv(name)
 }
 
 func checked(code *int) error {
@@ -73,7 +82,7 @@ func (f *Feishu) access(ctx context.Context) (string, error) {
 		Token  string `json:"tenant_access_token"`
 		Expire int    `json:"expire"`
 	}
-	e := f.HTTP.JSON(ctx, "POST", "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", jsonBody(map[string]string{"app_id": os.Getenv(c.AppID), "app_secret": os.Getenv(c.Secret)}), nil, &r)
+	e := f.HTTP.JSON(ctx, "POST", "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal", jsonBody(map[string]string{"app_id": f.credential(c.AppID), "app_secret": f.credential(c.Secret)}), nil, &r)
 	if e != nil {
 		return "", e
 	}
@@ -97,7 +106,7 @@ func (f *Feishu) Send(ctx context.Context, text, key string) error {
 	}
 	if c.Mode == "feishu_group" {
 		stamp := fmtRoom(time.Now().Unix())
-		e := f.HTTP.JSON(ctx, "POST", os.Getenv(c.Group.Webhook), jsonBody(map[string]any{"timestamp": stamp, "sign": FeishuSign(stamp, os.Getenv(c.Group.Secret)), "msg_type": "text", "content": map[string]string{"text": text}}), nil, &r)
+		e := f.HTTP.JSON(ctx, "POST", f.credential(c.Group.Webhook), jsonBody(map[string]any{"timestamp": stamp, "sign": FeishuSign(stamp, f.credential(c.Group.Secret)), "msg_type": "text", "content": map[string]string{"text": text}}), nil, &r)
 		if e != nil {
 			return e
 		}
@@ -109,7 +118,7 @@ func (f *Feishu) Send(ctx context.Context, text, key string) error {
 			return e
 		}
 		hash := sha256.Sum256([]byte(key))
-		e = f.HTTP.JSON(ctx, "POST", "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type="+c.Private.IDType, jsonBody(map[string]any{"receive_id": os.Getenv(c.Private.ID), "msg_type": "text", "content": string(jsonBody(map[string]string{"text": text})), "uuid": hex.EncodeToString(hash[:])[:32]}), map[string]string{"Authorization": "Bearer " + token}, &r)
+		e = f.HTTP.JSON(ctx, "POST", "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type="+c.Private.IDType, jsonBody(map[string]any{"receive_id": f.credential(c.Private.ID), "msg_type": "text", "content": string(jsonBody(map[string]string{"text": text})), "uuid": hex.EncodeToString(hash[:])[:32]}), map[string]string{"Authorization": "Bearer " + token}, &r)
 		if e != nil {
 			return e
 		}
