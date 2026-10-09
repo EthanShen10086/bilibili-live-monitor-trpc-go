@@ -72,7 +72,13 @@ func (d *DB) ImportLegacy(ctx context.Context, in LegacySnapshot) (ImportReport,
 		if e != nil {
 			return e
 		}
-		if _, e = tx.ExecContext(ctx, "INSERT INTO ep_subscriptions(tenant_id,id,room,enabled,policy) VALUES($1,$2,$3,false,$4)", tenant, sub, in.Subscription.RoomID, policy); e != nil {
+		createdAt := time.Now()
+		for _, job := range in.Jobs {
+			if at := time.UnixMilli(job.Notice.At); at.Before(createdAt) {
+				createdAt = at
+			}
+		}
+		if _, e = tx.ExecContext(ctx, "INSERT INTO ep_subscriptions(tenant_id,id,room,enabled,policy,created_at) VALUES($1,$2,$3,false,$4,$5)", tenant, sub, in.Subscription.RoomID, policy, createdAt); e != nil {
 			return e
 		}
 		if _, e = tx.ExecContext(ctx, "INSERT INTO ep_subscription_targets VALUES($1,$2,$3)", tenant, sub, target); e != nil {
@@ -100,6 +106,9 @@ func (d *DB) ImportLegacy(ctx context.Context, in LegacySnapshot) (ImportReport,
 				return e
 			}
 			if _, e = tx.ExecContext(ctx, "INSERT INTO ep_events(id,room,session_key,type,at,envelope,published) VALUES($1,$2,$3,$4,$5,$6,true) ON CONFLICT DO NOTHING", event.ID, event.Data.RequestedRoom, event.Data.SessionKey, event.Type, event.Time, raw); e != nil {
+				return e
+			}
+			if _, e = tx.ExecContext(ctx, "INSERT INTO ep_consumed(consumer,event_id) VALUES('notifications',$1) ON CONFLICT DO NOTHING", event.ID); e != nil {
 				return e
 			}
 			if _, e = tx.ExecContext(ctx, "INSERT INTO ep_jobs(id,tenant_id,subscription_id,target_id,event_id,state,text,attempts,next,expires,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", monitor.ID(), tenant, sub, target, event.ID, job.State, monitor.FormatNotice(job.Notice, in.Subscription.RoomID), job.Attempts, job.Next, job.Expires, event.Time); e != nil {

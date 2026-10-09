@@ -59,6 +59,13 @@ func Import(ctx context.Context, c Config, root, file, owner string, stopped boo
 		credentials.IDType = legacy.Notification.Private.IDType
 	}
 	snapshot.Target = domain.Target{Name: "Imported legacy channel", Kind: legacy.Notification.Mode, Credentials: credentials}
+	var rooms int
+	if e = source.QueryRowContext(ctx, "SELECT count(*) FROM observations").Scan(&rooms); e != nil {
+		return report, e
+	}
+	if rooms > 1 {
+		return report, errors.New("snapshot must contain a single observed room")
+	}
 	var live int
 	var start, key sql.NullString
 	e = source.QueryRowContext(ctx, "SELECT room,live,start,key FROM observations LIMIT 1").Scan(&snapshot.Observation.RoomID, &live, &start, &key)
