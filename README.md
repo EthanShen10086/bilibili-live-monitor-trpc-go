@@ -13,7 +13,7 @@ chmod 600 .env
 ./bin/monitor test-notification
 ```
 
-Go 1.26.3 或兼容更高版本。编译后只需 dist/monitor、config.yaml、.env、bin/monitor；tRPC-Go 另需 trpc_go.yaml。凭证各机器独立配置。缓存、二进制、数据库与日志不提交；go.mod/go.sum 提交。首次下载慢可临时设置 GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct，保留 checksum 校验。
+Go 1.26.9 或兼容更高版本。编译后只需 dist/monitor、config.yaml、.env、bin/monitor；tRPC-Go 另需 trpc_go.yaml。凭证各机器独立配置。缓存、二进制、数据库与日志不提交；go.mod/go.sum 提交。首次下载慢可临时设置 GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct，保留 checksum 校验。
 
 - [Mac 运行和迁移](docs/MAC.md)
 - [Linux 云端部署](docs/CLOUD.md)
@@ -32,3 +32,5 @@ Go 1.26.3 或兼容更高版本。编译后只需 dist/monitor、config.yaml、.
 资源保护与复现：[响应上限、日志轮转、历史保留和等待确认节流](docs/RESOURCE_SAFETY.md)。
 
 可选云端平台扩展已实现：PostgreSQL、Redis 缓存、Redis Streams 唤醒、调度与任务租约，以及 Linux Docker Compose / 可选 Nginx HTTPS。默认仍为本机 SQLite，不依赖外部服务。详见 [平台部署与迁移手册](docs/CLOUD_PLATFORM.md)。
+
+上线前改造、组件选型、健康探针、Prometheus/OTLP、备份恢复与验收：[生产就绪手册](docs/PRODUCTION_READINESS.md)。

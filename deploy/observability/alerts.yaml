@@ -1,0 +1,38 @@
+groups:
+  - name: bilibili-monitor
+    rules:
+      - alert: BilibiliMonitorUnavailable
+        expr: up{job="bilibili-monitor"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: '监控服务无法抓取指标'
+          description: '检查 supervisor、容器日志、端口和磁盘；业务可能无法检测或发送。'
+      - alert: BilibiliMonitorStalled
+        expr: time() - live_monitor_last_progress_timestamp_seconds{job="bilibili-monitor"} > 90
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: '监控调度没有推进'
+          description: '检查 watchdog 重启及数据库延迟；心跳文件更新不代表业务推进。'
+      - alert: BilibiliMonitorBusinessFailure
+        expr: live_monitor_health{job="bilibili-monitor",kind="business"} == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: '检测或通知持续失败'
+          description: '读取 /status 的 detector_state、notification_error、queue_error；修复权限或限流后处理失败队列。'
+      - alert: BilibiliMonitorDeadLetter
+        expr: live_monitor_jobs{job="bilibili-monitor",state="failed"} > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: '存在需要人工处理的失败通知'
+          description: '先修复飞书配置，再运行 retry-failed；超过 TTL 的任务不能补发。'
+      - alert: BilibiliMonitorBacklog
+        expr: (time() - live_monitor_oldest_pending_timestamp_seconds{job="bilibili-monitor"} > 300) and (live_monitor_oldest_pending_timestamp_seconds{job="bilibili-monitor"} > 0)
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: '通知积压超过五分钟'
+          description: '检查发送耗时、限流、数据库与队列恢复；默认 TTL 为三十分钟。'

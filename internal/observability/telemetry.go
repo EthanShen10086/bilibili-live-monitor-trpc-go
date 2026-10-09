@@ -22,28 +22,29 @@ import (
 )
 
 type Telemetry struct {
-	Registry                                            *prometheus.Registry
-	operations                                          *prometheus.CounterVec
-	duration                                            *prometheus.HistogramVec
-	queue                                               *prometheus.GaugeVec
-	state                                               *prometheus.GaugeVec
-	lastProgress, lastObservation, lastSent, leadership prometheus.Gauge
-	mu                                                  sync.Mutex
-	tracer                                              trace.Tracer
-	provider                                            *sdktrace.TracerProvider
+	Registry                                                           *prometheus.Registry
+	operations                                                         *prometheus.CounterVec
+	duration                                                           *prometheus.HistogramVec
+	queue                                                              *prometheus.GaugeVec
+	state                                                              *prometheus.GaugeVec
+	lastProgress, lastObservation, lastSent, leadership, oldestPending prometheus.Gauge
+	mu                                                                 sync.Mutex
+	tracer                                                             trace.Tracer
+	provider                                                           *sdktrace.TracerProvider
 }
 
 func New(ctx context.Context, c monitor.Config) (*Telemetry, error) {
 	t := &Telemetry{Registry: prometheus.NewRegistry(), tracer: noop.NewTracerProvider().Tracer("live-monitor")}
 	t.operations = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "live_monitor_operations_total", Help: "Completed operations by fixed operation and result."}, []string{"operation", "result"})
-	t.duration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "live_monitor_operation_duration_seconds", Help: "Operation duration including retries.", Buckets: []float64{.05, .1, .5, 1, 2, 5, 10, 20, 40}}, []string{"operation"})
+	t.duration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "live_monitor_operation_duration_seconds", Help: "Operation attempt duration.", Buckets: []float64{.05, .1, .5, 1, 2, 5, 10, 20, 40}}, []string{"operation"})
 	t.queue = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "live_monitor_jobs", Help: "Durable subscription jobs by state."}, []string{"state"})
 	t.state = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "live_monitor_health", Help: "Current process, readiness and business health."}, []string{"kind"})
+	t.oldestPending = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_oldest_pending_timestamp_seconds", Help: "Oldest pending observation; zero when the durable queue is empty."})
 	t.lastProgress = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_last_progress_timestamp_seconds", Help: "Last scheduling progress timestamp."})
 	t.lastObservation = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_last_observation_timestamp_seconds", Help: "Last successful observation timestamp."})
 	t.lastSent = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_last_sent_timestamp_seconds", Help: "Last notification accepted and committed."})
 	t.leadership = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_leadership", Help: "Whether this process owns the detector lease."})
-	t.Registry.MustRegister(t.operations, t.duration, t.queue, t.state, t.lastProgress, t.lastObservation, t.lastSent, t.leadership, prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	t.Registry.MustRegister(t.operations, t.duration, t.queue, t.state, t.lastProgress, t.lastObservation, t.lastSent, t.leadership, t.oldestPending, prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 	for _, op := range []string{"detector", "notification", "http"} {
 		for _, result := range []string{"success", "error"} {
 			t.operations.WithLabelValues(op, result)
@@ -108,6 +109,7 @@ func (t *Telemetry) Report(s monitor.Status) {
 	for _, state := range []string{"pending", "sent", "failed", "expired"} {
 		t.queue.WithLabelValues(state).Set(float64(counts[state]))
 	}
+	t.oldestPending.Set(float64(s.OldestPending) / 1000)
 	t.lastProgress.Set(float64(s.Progress) / 1000)
 	t.lastObservation.Set(float64(s.LastObservation) / 1000)
 	t.lastSent.Set(float64(s.LastSent) / 1000)

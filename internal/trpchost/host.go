@@ -141,6 +141,8 @@ func Run(ctx context.Context, o monitor.Options) error {
 	defer cancel()
 	workerDone := make(chan error, 1)
 	serverDone := make(chan error, 1)
+	watchdogDone := make(chan error, 1)
+	go func() { watchdogDone <- watchProgress(workerCtx, o.Root, 10*time.Second, 30*time.Second) }()
 	server.RegisterOnShutdown(cancel)
 	h := monitor.NewHTTP()
 	h.SetObserver(telemetry)
@@ -155,6 +157,7 @@ func Run(ctx context.Context, o monitor.Options) error {
 	case runErr = <-workerDone:
 		workerFinished = true
 	case runErr = <-serverDone:
+	case runErr = <-watchdogDone:
 	case <-ctx.Done():
 	}
 	cancel()

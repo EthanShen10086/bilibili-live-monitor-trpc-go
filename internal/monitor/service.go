@@ -10,6 +10,7 @@ import (
 )
 
 type Status struct {
+	OldestPending         int64  `json:"oldest_pending_at,omitempty"`
 	Progress              int64  `json:"last_progress_at,omitempty"`
 	Sending               bool   `json:"sending"`
 	NotificationState     string `json:"notification_state,omitempty"`
@@ -139,6 +140,7 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 	writer := newStatusReporter(filepath.Join(root, "var/status.json"))
 	report := func() error {
 		s.Pending = queue.Counts
+		s.OldestPending = queue.OldestPending
 		s.QueueRefreshes = queue.Refreshes
 		s.Progress = nowTime().UnixMilli()
 		s.Updated = s.Progress
@@ -209,6 +211,7 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 				runErr = err
 			}
 			s.Pending = queue.Counts
+			s.OldestPending = queue.OldestPending
 		}
 	}()
 	s.NotificationState = "healthy"

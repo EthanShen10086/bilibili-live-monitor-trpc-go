@@ -94,3 +94,20 @@ func TestRecoveryReturnsErrorAfterPanic(t *testing.T) {
 		t.Fatal(rsp, err)
 	}
 }
+
+func TestWatchdogRestartsStalledSchedulerButAcceptsProviderFailure(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UnixMilli()
+	monitor.AtomicJSON(filepath.Join(root, "var/status.json"), monitor.Status{Running: true, State: "blocked", Updated: now, Progress: now, NotificationState: "blocked"})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := watchProgress(ctx, root, 5*time.Millisecond, 0); err != nil {
+		t.Fatal("provider failure should alert, not restart", err)
+	}
+	monitor.AtomicJSON(filepath.Join(root, "var/status.json"), monitor.Status{Running: true, State: "healthy", Updated: now, Progress: now - 91000})
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := watchProgress(ctx, root, 5*time.Millisecond, 0); err == nil {
+		t.Fatal("stalled scheduler accepted")
+	}
+}

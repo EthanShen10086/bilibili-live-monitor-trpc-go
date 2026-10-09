@@ -1,9 +1,12 @@
 package observability
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -49,5 +52,38 @@ func TestMetricsAndSpansExcludeProviderSecrets(t *testing.T) {
 		if strings.Contains(span.Status.Description, "secret") || strings.Contains(fmt.Sprint(span.Attributes), "secret-webhook") {
 			t.Fatal("trace exposes secret")
 		}
+	}
+}
+
+func TestConfiguredOTLPExporterFlushesOnShutdown(t *testing.T) {
+	received := make(chan []byte, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- body
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(200)
+	}))
+	defer collector.Close()
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", collector.URL+"/v1/traces")
+	c := monitor.Config{}
+	c.Observability.Tracing = true
+	ratio := 1.
+	c.Observability.SampleRatio = &ratio
+	telemetry, err := New(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, finish := telemetry.Begin(context.Background(), "detector")
+	finish(errors.New("hidden-provider-token"))
+	if err = telemetry.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case payload := <-received:
+		if !bytes.Contains(payload, []byte("detector")) || bytes.Contains(payload, []byte("hidden-provider-token")) {
+			t.Fatal("invalid or sensitive exported trace")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("traces not exported on shutdown")
 	}
 }
