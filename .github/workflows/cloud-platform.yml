@@ -32,7 +32,11 @@ jobs:
         env:
           MONITOR_TEST_POSTGRES: postgres://monitor:test-only-password@127.0.0.1:5432/monitor?sslmode=disable
           MONITOR_TEST_REDIS: redis://127.0.0.1:6379
-        run: go test -race -v ./...
+        run: go test -race -v -coverprofile=coverage.out ./...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-coverage
+          path: coverage.out
       - run: go vet ./...
       - run: mkdir -p dist && go build -trimpath -o dist/monitor ./cmd/monitor
       - name: Real framework process smoke
@@ -54,3 +58,10 @@ jobs:
           docker compose --profile platform --profile workers --profile nginx -f compose.yaml -f platform.compose.yaml config --quiet
       - name: Cloud container build
         run: docker build -f deploy/cloud/Dockerfile -t live-monitor-test .
+      - name: Actual non-root container process and health probes
+        run: python3 scripts/smoke-container.py
+      - name: Prometheus scrape and alert configuration validation
+        run: >-
+          docker run --rm --entrypoint /bin/promtool
+          -v "$PWD/deploy/observability:/work:ro" -w /work
+          prom/prometheus:v3.15.0 check config prometheus.yaml
