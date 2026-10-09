@@ -144,3 +144,11 @@ func (t *Telemetry) Close() error {
 	defer cancel()
 	return t.provider.Shutdown(ctx)
 }
+
+// Provider returns the process trace provider for platform spans and Kafka propagation.
+func (t *Telemetry) Provider() trace.TracerProvider {
+	if t.provider != nil {
+		return t.provider
+	}
+	return noop.NewTracerProvider()
+}

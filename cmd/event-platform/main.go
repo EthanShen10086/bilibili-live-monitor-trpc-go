@@ -16,6 +16,7 @@ func main() {
 	role := flag.String("role", "api", "migrate|api|detector|relay|router|sender|analytics")
 	config := flag.String("trpc-config", "deploy/event-platform/trpc_go.yaml", "tRPC configuration")
 	flag.Parse()
+	slog.SetDefault(slog.Default().With("service", "live-platform", "role", *role))
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	c, e := eventplatform.LoadConfig()

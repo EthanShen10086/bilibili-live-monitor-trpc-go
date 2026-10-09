@@ -85,7 +85,7 @@ func (e Events) Observe(ctx context.Context, room int64, owner string, o monitor
 			kind = "live.ended.v1"
 		}
 		if kind != "" {
-			event := domain.Event{SpecVersion: "1.0", ID: EventID(room, session, kind), Source: "/bilibili/rooms", Type: kind, Subject: fmt.Sprint(room), Time: time.UnixMilli(o.At).UTC(), DataContentType: "application/json", Data: domain.EventData{SchemaVersion: 1, RequestedRoom: room, SessionKey: session, Catchup: catchup, Observation: o}}
+			event := domain.Event{SpecVersion: "1.0", ID: EventID(room, session, kind), Source: "/bilibili/rooms", Type: kind, Subject: fmt.Sprint(room), Time: time.UnixMilli(o.At).UTC(), DataContentType: "application/json", Data: domain.EventData{SchemaVersion: 1, RequestedRoom: room, SessionKey: session, Catchup: catchup || prev.At == 0, Observation: o}}
 			carrier := propagation.MapCarrier{}
 			propagation.TraceContext{}.Inject(ctx, carrier)
 			event.TraceParent = carrier.Get("traceparent")
@@ -190,4 +190,22 @@ func (e Events) OutboxCount(ctx context.Context) (int64, error) {
 	var n int64
 	err := e.DB.SQL.QueryRowContext(ctx, "SELECT count(*) FROM ep_events WHERE NOT published").Scan(&n)
 	return n, err
+}
+
+// DueRooms prioritizes overdue rooms, so one failed or slow room cannot starve the rest.
+func (e Events) DueRooms(ctx context.Context) ([]int64, error) {
+	rows, err := e.DB.SQL.QueryContext(ctx, `SELECT s.room FROM (SELECT DISTINCT room FROM ep_subscriptions WHERE enabled) s LEFT JOIN ep_rooms r ON r.room=s.room WHERE r.room IS NULL OR (r.next_probe<=clock_timestamp() AND (r.lease_until IS NULL OR r.lease_until<clock_timestamp())) ORDER BY r.next_probe NULLS FIRST,s.room LIMIT 100`)
+	if err != nil {
+		return nil, err
+	}
+	defer resource.Close(rows)
+	out := []int64{}
+	for rows.Next() {
+		var room int64
+		if err = rows.Scan(&room); err != nil {
+			return nil, err
+		}
+		out = append(out, room)
+	}
+	return out, rows.Err()
 }

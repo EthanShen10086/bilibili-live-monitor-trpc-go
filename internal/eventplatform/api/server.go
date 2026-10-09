@@ -59,13 +59,19 @@ func (s *Server) protected(fn endpoint) http.HandlerFunc {
 		defer cancel()
 		ctx, span := otel.Tracer("event-platform-api").Start(ctx, "api.request")
 		defer span.End()
+		started := time.Now()
+		status := http.StatusUnauthorized
+		defer func() {
+			sc := span.SpanContext()
+			slog.InfoContext(ctx, "api_request", "request_id", id, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String(), "route", r.Pattern, "method", r.Method, "status", status, "duration_ms", time.Since(started).Milliseconds())
+		}()
 		principal, e := s.Verify.Verify(ctx, r.Header.Get("Authorization"))
 		if e != nil {
 			write(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized", "request_id": id})
 			return
 		}
 		value, e := fn(ctx, principal, r)
-		status := http.StatusOK
+		status = http.StatusOK
 		if e != nil {
 			switch {
 			case errors.Is(e, domain.ErrForbidden):

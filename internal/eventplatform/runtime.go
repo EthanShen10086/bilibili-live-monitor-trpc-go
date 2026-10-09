@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -44,6 +48,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 		return e
 	}
 	defer resource.Close(telemetry)
+	otel.SetTracerProvider(telemetry.Provider())
 	h := monitor.NewHTTP()
 	h.SetObserver(telemetry)
 	defer h.Client.CloseIdleConnections()
@@ -58,102 +63,161 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 			return e
 		}
 		handler := &api.Server{Control: control, Notifications: notifications, Projections: projections, Verify: verify, RetentionDays: c.RetentionDays, Metrics: telemetry.Handler()}
-		return serve(ctx, configPath, handler)
+		return serve(ctx, configPath, handler.Handler())
 	}
-	if role == "detector" {
-		return tick(ctx, time.Second, func(ctx context.Context) error {
-			rooms, e := events.Rooms(ctx)
-			if e != nil {
-				return e
-			}
-			for _, room := range rooms {
-				if e = detect(ctx, room, owner, h, control, events, notifications); e != nil {
-					return e
-				}
-			}
-			return nil
-		})
-	}
-	if role == "sender" {
-		sender := channels.Sender{HTTP: h, AllowedSMTPHosts: c.SMTPHosts}
-		return tick(ctx, time.Second, func(ctx context.Context) error {
-			job, e := notifications.Claim(ctx, owner)
-			if e != nil || job == nil {
-				return e
-			}
-			target, e := control.ResolveTarget(ctx, job.TenantID, job.TargetID)
-			if e == nil {
-				deliveryCtx, end := context.WithTimeout(ctx, 30*time.Second)
-				e = sender.Send(deliveryCtx, target, job.Text, job.ID)
-				end()
-			}
-			finishCtx, end := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer end()
-			return notifications.Finish(finishCtx, *job, e)
-		})
-	}
-	if role != "relay" && role != "router" && role != "analytics" {
-		return errors.New("role must be migrate|api|detector|relay|router|sender|analytics")
-	}
-	kafkaConfig := c.Kafka
-	if role == "router" {
-		kafkaConfig.Group = "live-notifications-v1"
-	}
-	if role == "analytics" {
-		kafkaConfig.Group = "live-analytics-v1"
-	}
-	client, e := bus.Open(initCtx, kafkaConfig)
-	if e != nil {
-		return e
-	}
-	defer resource.Close(client)
-	if role == "relay" {
-		return tick(ctx, time.Second, func(ctx context.Context) error { return events.PublishBatch(ctx, client.Publish) })
-	}
-	workerCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	background := make(chan error, 1)
-	go func() {
-		background <- tick(workerCtx, 5*time.Second, func(ctx context.Context) error {
-			if role == "analytics" {
-				return projections.RebuildNext(ctx)
-			}
-			snapshots, e := events.LiveSnapshots(ctx)
-			if e != nil {
-				return e
-			}
-			for _, event := range snapshots {
-				if time.Since(event.Time) > 2*time.Hour {
-					continue
-				}
-				subs, e := control.RoomSubscriptions(ctx, event.Data.RequestedRoom)
+	return runWorker(ctx, configPath, db, telemetry, events, notifications, func(ctx context.Context) error {
+		if role == "detector" {
+			return tick(ctx, time.Second, func(ctx context.Context) error {
+				rooms, e := events.DueRooms(ctx)
 				if e != nil {
 					return e
 				}
-				if e = notifications.Route(ctx, event, subs, true); e != nil {
+				for _, room := range rooms {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					if e = detect(ctx, room, owner, h, control, events, notifications); e != nil {
+						slog.WarnContext(ctx, "room_probe_failed", "room_id", room, "error_type", typeName(e))
+					}
+				}
+				return nil
+			})
+		}
+		if role == "sender" {
+			sender := channels.Sender{HTTP: h, AllowedSMTPHosts: c.SMTPHosts}
+			return tick(ctx, time.Second, func(ctx context.Context) error {
+				job, e := notifications.Claim(ctx, owner)
+				if e != nil || job == nil {
 					return e
 				}
-			}
-			return nil
-		})
-	}()
-	e = client.Consume(workerCtx, func(ctx context.Context, event domain.Event) error {
-		ctx = propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": event.TraceParent, "tracestate": event.TraceState})
-		ctx, span := otel.Tracer("event-platform").Start(ctx, role+".consume")
-		defer span.End()
-		if role == "analytics" {
-			return events.Project(ctx, event)
+				deliveryCtx, end := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+				defer end()
+				target, e := control.ResolveTarget(deliveryCtx, job.TenantID, job.TargetID)
+				if e == nil {
+					e = sender.Send(deliveryCtx, target, job.Text, job.ID)
+				}
+				finishCtx, end := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer end()
+				slog.InfoContext(deliveryCtx, "notification_attempt", "task_id", job.ID, "event_id", job.EventID, "result", typeName(e))
+				return notifications.Finish(finishCtx, *job, e)
+			})
 		}
-		subs, e := control.RoomSubscriptions(ctx, event.Data.RequestedRoom)
+		if role != "relay" && role != "router" && role != "analytics" {
+			return errors.New("role must be migrate|api|detector|relay|router|sender|analytics")
+		}
+		kafkaConfig := c.Kafka
+		if role == "router" {
+			kafkaConfig.Group = "live-notifications-v1"
+		}
+		if role == "analytics" {
+			kafkaConfig.Group = "live-analytics-v1"
+		}
+		client, e := bus.Open(initCtx, kafkaConfig)
 		if e != nil {
 			return e
 		}
-		return notifications.Route(ctx, event, subs, false)
-	}, func(ctx context.Context, id string) error {
-		return events.Deadletter(ctx, role, id, "invalid_event_contract")
+		defer resource.Close(client)
+		if role == "relay" {
+			return tick(ctx, time.Second, func(ctx context.Context) error { return events.PublishBatch(ctx, client.Publish) })
+		}
+		workerCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		background := make(chan error, 1)
+		go func() {
+			background <- tick(workerCtx, 5*time.Second, func(ctx context.Context) error {
+				if role == "analytics" {
+					return projections.RebuildNext(ctx)
+				}
+				snapshots, e := events.LiveSnapshots(ctx)
+				if e != nil {
+					return e
+				}
+				for _, event := range snapshots {
+					if time.Since(event.Time) > 2*time.Hour {
+						continue
+					}
+					subs, e := control.RoomSubscriptions(ctx, event.Data.RequestedRoom)
+					if e != nil {
+						return e
+					}
+					if e = notifications.Route(ctx, event, subs, true); e != nil {
+						return e
+					}
+				}
+				return nil
+			})
+		}()
+		e = client.Consume(workerCtx, func(ctx context.Context, event domain.Event) error {
+			ctx = propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": event.TraceParent, "tracestate": event.TraceState})
+			ctx, span := otel.Tracer("event-platform").Start(ctx, role+".consume")
+			defer span.End()
+			if role == "analytics" {
+				return events.Project(ctx, event)
+			}
+			subs, e := control.RoomSubscriptions(ctx, event.Data.RequestedRoom)
+			if e != nil {
+				return e
+			}
+			return notifications.Route(ctx, event, subs, false)
+		}, func(ctx context.Context, id string) error {
+			return events.Deadletter(ctx, role, id, "invalid_event_contract")
+		})
+		stop()
+		<-background
+		return e
 	})
-	stop()
-	<-background
+}
+
+func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observability.Telemetry, events store.Events, jobs store.Notifications, worker func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var progress atomic.Int64
+	progress.Store(time.Now().Unix())
+	gauge := prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_platform_outbox_pending", Help: "Unpublished durable events."})
+	counts := prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "live_platform_notifications", Help: "Durable notifications by state."}, []string{"state"})
+	heartbeat := prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_platform_progress_timestamp_seconds", Help: "Last successful database maintenance/probe cycle."})
+	telemetry.Registry.MustRegister(gauge, counts, heartbeat)
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", telemetry.Handler())
+	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		probeCtx, end := context.WithTimeout(r.Context(), time.Second)
+		defer end()
+		if db.SQL.PingContext(probeCtx) != nil || time.Now().Unix()-progress.Load() > 60 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	done := make(chan error, 3)
+	go func() { done <- serve(ctx, path, mux) }()
+	go func() { done <- worker(ctx) }()
+	go func() {
+		done <- tick(ctx, 15*time.Second, func(ctx context.Context) error {
+			n, e := events.OutboxCount(ctx)
+			if e != nil {
+				return e
+			}
+			gauge.Set(float64(n))
+			states, e := jobs.Counts(ctx)
+			if e != nil {
+				return e
+			}
+			for _, state := range []string{"pending", "sending", "sent", "failed", "expired", "disabled"} {
+				counts.WithLabelValues(state).Set(float64(states[state]))
+			}
+			progress.Store(time.Now().Unix())
+			heartbeat.Set(float64(progress.Load()))
+			return nil
+		})
+	}()
+	e := <-done
+	cancel()
+	for range 2 {
+		if err := <-done; e == nil {
+			e = err
+		}
+	}
 	return e
 }
 
@@ -179,6 +243,9 @@ func tick(ctx context.Context, interval time.Duration, fn func(context.Context) 
 }
 
 func typeName(e error) string {
+	if e == nil {
+		return "success"
+	}
 	if errors.Is(e, domain.ErrConflict) {
 		return "conflict"
 	}
@@ -200,7 +267,11 @@ func detect(ctx context.Context, room int64, owner string, h monitor.Detector, c
 		}
 	}
 	if len(active) == 0 {
-		return nil
+		acquired, e := events.Acquire(ctx, room, owner)
+		if e != nil || !acquired {
+			return e
+		}
+		return events.Delay(ctx, room, owner, time.Minute)
 	}
 	acquired, e := events.Acquire(ctx, room, owner)
 	if e != nil || !acquired {
@@ -246,7 +317,7 @@ func detect(ctx context.Context, room int64, owner string, h monitor.Detector, c
 	return events.Observe(ctx, room, owner, o, false, delay)
 }
 
-func serve(ctx context.Context, path string, handler *api.Server) error {
+func serve(ctx context.Context, path string, handler *http.ServeMux) error {
 	cfg, e := trpc.LoadConfig(path)
 	if e != nil {
 		return e
@@ -257,7 +328,7 @@ func serve(ctx context.Context, path string, handler *api.Server) error {
 	}
 	defer func() { resource.LogError("platform_plugins", closer()) }()
 	s := trpc.NewServerWithConfig(cfg)
-	thttp.RegisterNoProtocolServiceMux(s.Service("trpc.live.platform.API"), handler.Handler())
+	thttp.RegisterNoProtocolServiceMux(s.Service("trpc.live.platform.API"), handler)
 	done := make(chan error, 1)
 	go func() { done <- s.Serve() }()
 	select {
