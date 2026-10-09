@@ -42,18 +42,19 @@ func (n Notifications) Route(ctx context.Context, event domain.Event, subs []dom
 				continue
 			}
 			policy := s.Policy.MonitorConfig(s.RoomID)
-			if !policy.InWindow(event.Time) || !policy.InWindow(time.Now()) {
+			if !policy.InWindow(event.Time) || (snapshot && !policy.InWindow(time.Now())) {
 				continue
 			}
 			expires := event.Time.Add(time.Duration(s.Policy.TTLMinutes) * time.Minute)
+			state := "pending"
 			if !expires.After(time.Now()) {
-				continue
+				state = "expired"
 			}
 			carrier := propagation.MapCarrier{}
 			propagation.TraceContext{}.Inject(ctx, carrier)
 			text := monitor.FormatNotice(monitor.Notice{Observation: event.Data.Observation, Key: event.Data.SessionKey, Catchup: event.Data.Catchup}, s.RoomID)
 			for _, target := range s.TargetIDs {
-				_, err := tx.ExecContext(ctx, "INSERT INTO ep_jobs(id,tenant_id,subscription_id,target_id,event_id,state,text,next,expires,traceparent,tracestate) SELECT $1,$2,$3,$4,$5,'pending',$6,clock_timestamp(),$7,$8,$9 WHERE EXISTS(SELECT 1 FROM ep_subscription_targets st JOIN ep_subscriptions sub ON sub.tenant_id=st.tenant_id AND sub.id=st.id WHERE st.tenant_id=$2 AND st.id=$3 AND st.target_id=$4 AND sub.enabled) ON CONFLICT DO NOTHING", monitor.ID(), s.TenantID, s.ID, target, event.ID, text, expires, carrier.Get("traceparent"), carrier.Get("tracestate"))
+				_, err := tx.ExecContext(ctx, "INSERT INTO ep_jobs(id,tenant_id,subscription_id,target_id,event_id,state,text,next,expires,traceparent,tracestate) SELECT $1,$2,$3,$4,$5,$10,$6,clock_timestamp(),$7,$8,$9 WHERE EXISTS(SELECT 1 FROM ep_subscription_targets st JOIN ep_subscriptions sub ON sub.tenant_id=st.tenant_id AND sub.id=st.id WHERE st.tenant_id=$2 AND st.id=$3 AND st.target_id=$4 AND sub.enabled) ON CONFLICT DO NOTHING", monitor.ID(), s.TenantID, s.ID, target, event.ID, text, expires, carrier.Get("traceparent"), carrier.Get("tracestate"), state)
 				if err != nil {
 					return err
 				}

@@ -280,3 +280,26 @@ func TestRetentionPreservesActiveSessionAndUnpublished(t *testing.T) {
 		t.Fatal("unpublished event was pruned", e)
 	}
 }
+
+func TestExpiredBrokerEventCannotReviveThroughSnapshot(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	_, _, _, sub := fixture(t, db)
+	sub.CreatedAt = time.Now().Add(-3 * time.Hour)
+	event := domain.Event{SpecVersion: "1.0", ID: monitor.ID(), Source: "/bilibili/rooms", Type: "live.started.v1", Time: time.Now().Add(-2 * time.Hour), Data: domain.EventData{SchemaVersion: 1, RequestedRoom: sub.RoomID, SessionKey: "expired-session"}}
+	notifications := Notifications{db}
+	if err := notifications.Route(ctx, event, []domain.Subscription{sub}, false); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := notifications.Counts(ctx)
+	if err != nil || counts["expired"] != 1 {
+		t.Fatal("expired event did not leave a terminal dedup marker", counts, err)
+	}
+	event.Time = time.Now()
+	if err := notifications.Route(ctx, event, []domain.Subscription{sub}, true); err != nil {
+		t.Fatal(err)
+	}
+	if job, err := notifications.Claim(ctx, "sender"); err != nil || job != nil {
+		t.Fatal("snapshot resurrected expired event", err)
+	}
+}
