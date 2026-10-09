@@ -1,7 +1,10 @@
 package monitor
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +16,11 @@ import (
 )
 
 type Config struct {
+	Observability struct {
+		Tracing     bool     `yaml:"tracing"`
+		SampleRatio *float64 `yaml:"sample_ratio,omitempty"`
+		ServiceName string   `yaml:"service_name,omitempty"`
+	} `yaml:"observability"`
 	Platform    PlatformConfig `yaml:"platform"`
 	Maintenance struct {
 		RetentionDays *int `yaml:"history_retention_days,omitempty"`
@@ -73,14 +81,21 @@ func Load(root string) (Config, error) {
 	if e != nil {
 		return c, e
 	}
-	if e = yaml.Unmarshal(b, &c); e != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(b))
+	decoder.KnownFields(true)
+	if e = decoder.Decode(&c); e != nil {
 		return c, fmt.Errorf("invalid YAML")
+	}
+	var extra any
+	if !errors.Is(decoder.Decode(&extra), io.EOF) {
+		return c, fmt.Errorf("config.yaml must contain one YAML document")
 	}
 	if e = LoadEnv(root); e != nil {
 		return c, e
 	}
 	return c, c.Validate()
 }
+
 func LoadEnv(root string) error {
 	p := filepath.Join(root, ".env")
 	f, e := os.Stat(p)
@@ -90,7 +105,7 @@ func LoadEnv(root string) error {
 	if e != nil {
 		return e
 	}
-	if f.Mode().Perm() != 0600 {
+	if f.Mode().Perm() != 0o600 {
 		return fmt.Errorf(".env must have permissions 600")
 	}
 	b, e := os.ReadFile(p)
@@ -109,11 +124,14 @@ func LoadEnv(root string) error {
 		k = strings.TrimSpace(strings.TrimPrefix(k, "export "))
 		v = strings.Trim(strings.TrimSpace(v), "\"'")
 		if _, ok = os.LookupEnv(k); !ok {
-			os.Setenv(k, v)
+			if err := os.Setenv(k, v); err != nil {
+				return fmt.Errorf("invalid environment variable name")
+			}
 		}
 	}
 	return nil
 }
+
 func minutes(s string) (int, error) {
 	if s == "24:00" {
 		return 1440, nil
@@ -132,7 +150,11 @@ func minutes(s string) (int, error) {
 	}
 	return h*60 + m, nil
 }
+
 func (c Config) Validate() error {
+	if p := c.Observability.SampleRatio; p != nil && (*p < 0 || *p > 1) {
+		return fmt.Errorf("observability.sample_ratio must be 0..1")
+	}
 	if err := c.Platform.Validate(c); err != nil {
 		return err
 	}
@@ -190,6 +212,7 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
 func (c Config) Credentials() error {
 	names := []string{}
 	if c.Platform.StorageMode() == "postgres" {
@@ -221,8 +244,12 @@ func (c Config) Credentials() error {
 	}
 	return nil
 }
+
 func (c Config) InWindow(now time.Time) bool {
-	loc, _ := time.LoadLocation(c.Schedule.Timezone)
+	loc, err := time.LoadLocation(c.Schedule.Timezone)
+	if err != nil {
+		return false
+	}
 	t := now.In(loc)
 	day := int(t.Weekday())
 	if day == 0 {
@@ -234,11 +261,18 @@ func (c Config) InWindow(now time.Time) bool {
 			found = true
 		}
 	}
-	s, _ := minutes(c.Schedule.Start)
-	e, _ := minutes(c.Schedule.End)
+	s, err := minutes(c.Schedule.Start)
+	if err != nil {
+		return false
+	}
+	e, err := minutes(c.Schedule.End)
+	if err != nil {
+		return false
+	}
 	m := t.Hour()*60 + t.Minute()
 	return found && m >= s && m < e
 }
+
 func Backoff(n, base int) time.Duration {
 	if n < 1 {
 		n = 1

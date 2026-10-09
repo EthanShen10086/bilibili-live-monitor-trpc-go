@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -40,6 +41,7 @@ func NormalizeStart(v any) string {
 	}
 	return t.UTC().Format("2006-01-02T15:04:05.000Z")
 }
+
 func ParseRoom(b []byte, requested int64, at time.Time) (Observation, error) {
 	var r struct {
 		Code *int `json:"code"`
@@ -66,13 +68,15 @@ func ParseRoom(b []byte, requested int64, at time.Time) (Observation, error) {
 	}
 	return Observation{d.RoomID, *d.Live == 1, *d.Title, NormalizeStart(d.Start), at.UnixMilli()}, nil
 }
+
 func (h *HTTP) Probe(ctx context.Context, c Config) (Observation, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.Detector.Polling.Timeout)*time.Second)
 	defer cancel()
 	var raw json.RawMessage
 	e := h.JSON(ctx, "GET", fmt.Sprintf("https://api.live.bilibili.com/room/v1/Room/get_info?room_id=%d", c.Subscription.RoomID), nil, nil, &raw)
 	if e != nil {
-		if r, ok := e.(*RemoteError); ok {
+		var r *RemoteError
+		if errors.As(e, &r) {
 			r.Retry = true
 		}
 		return Observation{}, e

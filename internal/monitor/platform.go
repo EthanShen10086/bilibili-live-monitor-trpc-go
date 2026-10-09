@@ -24,6 +24,9 @@ type Repository interface {
 	Close() error
 }
 
+// QueueAge is optional so custom repositories can evolve independently.
+type QueueAge interface{ OldestPending() (int64, error) }
+
 type TaskQueue interface {
 	Publish(context.Context) error
 	Receive(context.Context) (*Job, string, error)
@@ -38,7 +41,8 @@ type PlatformConfig struct {
 	Role           string `yaml:"role"`
 	SubscriptionID string `yaml:"subscription_id"`
 	Postgres       struct {
-		DSNEnv string `yaml:"dsn_env"`
+		DSNEnv      string `yaml:"dsn_env"`
+		AutoMigrate *bool  `yaml:"auto_migrate,omitempty"`
 	} `yaml:"postgres"`
 	Redis struct {
 		URLEnv string `yaml:"url_env"`
@@ -51,24 +55,28 @@ func (p PlatformConfig) StorageMode() string {
 	}
 	return p.Storage
 }
+
 func (p PlatformConfig) WorkerRole() string {
 	if p.Role == "" {
 		return "both"
 	}
 	return p.Role
 }
+
 func (p PlatformConfig) QueueMode() string {
 	if p.Queue == "" {
 		return "database"
 	}
 	return p.Queue
 }
+
 func (p PlatformConfig) CacheMode() string {
 	if p.Cache == "" {
 		return "memory"
 	}
 	return p.Cache
 }
+
 func (p PlatformConfig) Validate(c Config) error {
 	if p.StorageMode() != "sqlite" && p.StorageMode() != "postgres" {
 		return fmt.Errorf("platform.storage must be sqlite|postgres")
@@ -102,6 +110,7 @@ func (p PlatformConfig) Validate(c Config) error {
 	}
 	return nil
 }
+
 func OpenRepository(ctx context.Context, root string, c Config) (Repository, error) {
 	if c.Platform.StorageMode() == "postgres" {
 		return OpenPostgres(ctx, c)

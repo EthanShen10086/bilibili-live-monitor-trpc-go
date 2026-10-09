@@ -38,7 +38,7 @@ deployment:
 maintenance:
   history_retention_days: 90  # 每天最多清理 200 条旧终态任务；保留当前场次和待发送任务，0 为关闭
 
-# Lightweight by default: no external connections or background services.
+# Distributed profile; prefer config.light.yaml for a single subscription.
 platform:
   storage: postgres
   cache: redis
@@ -47,5 +47,6 @@ platform:
   subscription_id: room-1616-main
   postgres:
     dsn_env: MONITOR_POSTGRES_DSN
+    auto_migrate: false # run manage.sh platform migrate before starting workers
   redis:
     url_env: MONITOR_REDIS_URL

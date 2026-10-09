@@ -48,10 +48,21 @@ for binary in ('monitor',):
                             if p.poll() is not None or time.monotonic() > deadline:
                                 raise
                             time.sleep(.1)
+                    for endpoint in ('livez', 'readyz', 'metrics'):
+                        with urllib.request.urlopen(f'http://127.0.0.1:{ports[1]}/{endpoint}', timeout=5) as response:
+                            body = response.read()
+                            assert response.status == 200
+                            if endpoint == 'metrics': assert b'live_monitor_health' in body
                     with urllib.request.urlopen(f'http://127.0.0.1:{ports[1]}/status', timeout=5) as response:
                         assert json.load(response)['detector_state'] == 'outside_window'
+                for probe in ('live', 'ready', 'business'):
+                    subprocess.run([str(go / 'dist/monitor'), '--root', str(root), 'healthcheck', probe], check=True, capture_output=True)
+                backup = root / 'backup.sqlite'
+                subprocess.run([str(go / 'dist/monitor'), '--root', str(root), 'backup', str(backup)], check=True, capture_output=True)
+                assert backup.exists()
                 second = subprocess.run([str(go / 'dist/monitor'), '--root', str(root), 'run', '--managed', 'cloud'], capture_output=True, timeout=5)
-                assert second.returncode != 0 and b'ELOCKED' in (root / 'var/error.log').read_bytes()
+                assert second.returncode != 0 and b'ELOCKED' in second.stderr
+                assert b'"command_failed"' in second.stderr
                 p.terminate(); assert p.wait(timeout=40) == 0
                 assert not json.loads((root / 'var/status.json').read_text())['running']
                 assert not (root / 'var/instance.guard.lock').exists()

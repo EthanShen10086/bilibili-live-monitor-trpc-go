@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,7 +23,10 @@ type Options struct {
 }
 
 func ParseOptions(args []string) (Options, error) {
-	root, _ := os.Getwd()
+	root, err := os.Getwd()
+	if err != nil {
+		return Options{}, err
+	}
 	o := Options{Root: root}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -47,9 +52,14 @@ func ParseOptions(args []string) (Options, error) {
 			o.Args = append(o.Args, args[i])
 		}
 	}
-	o.Root, _ = filepath.Abs(o.Root)
+	var errAbs error
+	o.Root, errAbs = filepath.Abs(o.Root)
+	if errAbs != nil {
+		return o, errAbs
+	}
 	return o, nil
 }
+
 func Print(v any) error {
 	b, e := json.MarshalIndent(v, "", "  ")
 	if e != nil {
@@ -58,6 +68,7 @@ func Print(v any) error {
 	fmt.Println(string(b))
 	return nil
 }
+
 func PrepareRun(ctx context.Context, o Options) (Config, error) {
 	c, e := Load(o.Root)
 	if e != nil {
@@ -81,20 +92,21 @@ func PrepareRun(ctx context.Context, o Options) (Config, error) {
 	}
 	return c, e
 }
+
 func CLI(ctx context.Context, o Options) error {
 	cmd := "help"
 	if len(o.Args) > 0 {
 		cmd = o.Args[0]
 	}
 	if cmd == "help" {
-		fmt.Println("monitor check-config [--probe] [--official-auth]\nmonitor platform-import-sqlite SOURCE_ROOT (stopped source, empty target)\nmonitor platform-check (connect selected backends; no messages)\nmonitor probe\nmonitor run\nmonitor status\nmonitor test-notification\nmonitor retry-failed\nmonitor confirm-start\nmonitor service install|start|stop|health|doctor|verify-recovery --side local|cloud\nmonitor switch local|cloud\nmonitor set-active local|cloud (initial setup only)")
+		fmt.Println("monitor check-config [--probe] [--official-auth]\nmonitor platform-import-sqlite SOURCE_ROOT (stopped source, empty target)\nmonitor platform-check (connect selected backends; no messages)\nmonitor healthcheck live|ready|business\nmonitor platform-migrate\nmonitor backup /absolute/new-file.sqlite\nmonitor restore /absolute/backup.sqlite (empty stopped target)\nmonitor probe\nmonitor run\nmonitor status\nmonitor test-notification\nmonitor retry-failed\nmonitor confirm-start\nmonitor service install|start|stop|health|doctor|verify-recovery --side local|cloud\nmonitor switch local|cloud\nmonitor set-active local|cloud (initial setup only)")
 		return nil
 	}
 	c, e := Load(o.Root)
 	if e != nil {
 		return e
 	}
-	if e = os.MkdirAll(filepath.Join(o.Root, "var"), 0700); e != nil {
+	if e = os.MkdirAll(filepath.Join(o.Root, "var"), 0o700); e != nil {
 		return e
 	}
 	h := NewHTTP()
@@ -105,6 +117,60 @@ func CLI(ctx context.Context, o Options) error {
 		return ""
 	}
 	switch cmd {
+	case "healthcheck":
+		s, err := ReadStatus(o.Root)
+		if err != nil {
+			return fmt.Errorf("status unavailable")
+		}
+		valid := false
+		switch arg() {
+		case "live":
+			valid = s.Live(time.Now())
+		case "ready":
+			valid = s.Ready(time.Now())
+		case "business":
+			valid = s.BusinessHealthy(time.Now())
+		default:
+			return fmt.Errorf("healthcheck live|ready|business")
+		}
+		if !valid {
+			return fmt.Errorf("worker %s unhealthy", arg())
+		}
+		return nil
+	case "platform-migrate":
+		if c.Platform.StorageMode() != "postgres" {
+			return fmt.Errorf("platform-migrate requires PostgreSQL")
+		}
+		if os.Getenv(c.Platform.Postgres.DSNEnv) == "" {
+			return fmt.Errorf("PostgreSQL DSN missing")
+		}
+		apply := true
+		c.Platform.Postgres.AutoMigrate = &apply
+		db, err := OpenPostgres(ctx, c)
+		if err != nil {
+			return err
+		}
+		defer resource.Close(db)
+		return Print(map[string]any{"schema_version": 1, "notification_sent": false})
+	case "backup":
+		if c.Platform.StorageMode() != "sqlite" {
+			return fmt.Errorf("use pg_dump for PostgreSQL backups")
+		}
+		if arg() == "" {
+			return fmt.Errorf("backup /absolute/new-file.sqlite")
+		}
+		if err := BackupSQLite(ctx, o.Root, arg()); err != nil {
+			return err
+		}
+		return Print(map[string]any{"backup": arg(), "notification_sent": false})
+	case "restore":
+		if c.Platform.StorageMode() != "sqlite" {
+			return fmt.Errorf("use pg_restore for PostgreSQL")
+		}
+		if arg() == "" {
+			return fmt.Errorf("restore /absolute/backup.sqlite (empty stopped target)")
+		}
+		return RestoreSQLite(ctx, o.Root, arg())
 	case "platform-import-sqlite":
 		if c.Platform.StorageMode() != "postgres" || len(o.Args) != 2 {
 			return fmt.Errorf("usage: platform-import-sqlite /absolute/stopped/source-root (PostgreSQL mode)")
@@ -119,7 +185,7 @@ func CLI(ctx context.Context, o Options) error {
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer resource.Close(db)
 		n, err := db.ImportSQLite(ctx, o.Args[1], c)
 		if err != nil {
 			return err
@@ -133,20 +199,24 @@ func CLI(ctx context.Context, o Options) error {
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer resource.Close(db)
 		if c.Platform.CacheMode() == "redis" {
 			cache, err := OpenCache(c)
 			if err != nil {
 				return err
 			}
-			cache.Close()
+			resource.Close(cache)
 		}
 		if c.Platform.QueueMode() == "redis_streams" {
-			q, err := OpenStreamQueue(c, db.(*PostgresStore))
+			pg, ok := db.(*PostgresStore)
+			if !ok {
+				return fmt.Errorf("streams require postgres repository")
+			}
+			q, err := OpenStreamQueue(c, pg)
 			if err != nil {
 				return err
 			}
-			q.Close()
+			resource.Close(q)
 		}
 		return Print(map[string]any{"ready": true, "storage": c.Platform.StorageMode(), "queue": c.Platform.QueueMode(), "cache": c.Platform.CacheMode(), "role": c.Platform.WorkerRole(), "notification_sent": false})
 	case "run":
@@ -220,7 +290,9 @@ func CLI(ctx context.Context, o Options) error {
 				result["cloud_status"] = map[string]string{"error": "cloud status unavailable"}
 			} else {
 				var remote any
-				json.Unmarshal([]byte(out), &remote)
+				if err := json.Unmarshal([]byte(out), &remote); err != nil {
+					return fmt.Errorf("invalid cloud status JSON")
+				}
 				result["cloud_status"] = remote
 			}
 		}
@@ -238,7 +310,7 @@ func CLI(ctx context.Context, o Options) error {
 		if e != nil {
 			return e
 		}
-		defer db.Close()
+		defer resource.Close(db)
 		n, e := db.Retry(time.Now())
 		if e != nil {
 			return e

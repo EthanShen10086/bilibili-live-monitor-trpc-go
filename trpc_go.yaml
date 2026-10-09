@@ -5,6 +5,8 @@ server:
   app: live
   server: monitor
   max_close_wait_time: 10000
+  filter:
+    - monitor_recovery
   admin:
     ip: 127.0.0.1
     port: 19028
@@ -15,3 +17,9 @@ server:
       network: tcp
       protocol: http
       timeout: 2000
+plugins:
+  log:
+    default:
+      - writer: console
+        level: info
+        formatter: json

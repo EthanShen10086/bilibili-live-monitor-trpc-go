@@ -40,6 +40,7 @@ type QueueSchedule struct {
 	NextCheck, NextDue time.Time
 	Counts             map[string]int
 	Refreshes          int
+	OldestPending      int64
 	version            int64
 }
 
@@ -58,6 +59,11 @@ func (q *QueueSchedule) Refresh(now time.Time) error {
 		if q.NextDue, e = q.Store.NextWake(); e != nil {
 			return e
 		}
+		if age, ok := q.Store.(QueueAge); ok {
+			if q.OldestPending, e = age.OldestPending(); e != nil {
+				return e
+			}
+		}
 		q.Refreshes++
 	}
 	q.version = version
@@ -65,6 +71,7 @@ func (q *QueueSchedule) Refresh(now time.Time) error {
 	q.NextCheck = now.Add(WorkerHeartbeat)
 	return nil
 }
+
 func Earliest(fallback time.Time, candidates ...time.Time) time.Time {
 	for _, v := range candidates {
 		if !v.IsZero() && v.Before(fallback) {

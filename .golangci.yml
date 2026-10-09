@@ -1,0 +1,41 @@
+version: "2"
+run:
+  timeout: 5m
+  tests: true
+  build-tags: [integration]
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - errcheck
+    - errorlint
+    - bodyclose
+    - durationcheck
+    - nolintlint
+  settings:
+    staticcheck:
+      checks: ["all", "-QF1003"] # Protocol decoder branch is clearer with explicit conditions.
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    presets: []
+    rules:
+      # Test setup/cleanup assertions are reviewed; correctness analyzers still run.
+      - path: _test\.go$
+        linters: [errcheck]
+formatters:
+  enable: [gofumpt, goimports]
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/EthanShen10086/bilibili-live-monitor-trpc-go
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

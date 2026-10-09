@@ -1,14 +1,19 @@
 package monitor
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
-const LogLimit = 2 * 1024 * 1024
-const logChunkLimit = 64 * 1024
+const (
+	LogLimit      = 2 * 1024 * 1024
+	logChunkLimit = 64 * 1024
+)
 
 func trimLog(file string) error {
 	stat, e := os.Stat(file)
@@ -27,14 +32,15 @@ func trimLog(file string) error {
 	}
 	tail := make([]byte, LogLimit)
 	_, e = f.ReadAt(tail, stat.Size()-LogLimit)
-	f.Close()
+	resource.Close(f)
 	if e != nil {
 		return e
 	}
-	return os.WriteFile(file, tail, 0600)
+	return os.WriteFile(file, tail, 0o600)
 }
+
 func AppendBoundedLog(file string, p []byte) error {
-	if e := os.MkdirAll(filepath.Dir(file), 0700); e != nil {
+	if e := os.MkdirAll(filepath.Dir(file), 0o700); e != nil {
 		return e
 	}
 	if len(p) > logChunkLimit {
@@ -52,13 +58,12 @@ func AppendBoundedLog(file string, p []byte) error {
 			}
 		}
 	}
-	f, e := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, e := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if e != nil {
 		return e
 	}
-	defer f.Close()
 	_, e = f.Write(p)
-	return e
+	return errors.Join(e, f.Close())
 }
 
 type logWriter struct {
@@ -75,8 +80,10 @@ func (w *logWriter) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
 func copyLogs(file string, r *os.File, done chan<- struct{}) {
-	defer r.Close()
+	defer resource.Close(r)
 	defer close(done)
-	io.CopyBuffer(&logWriter{file: file}, r, make([]byte, 32*1024))
+	_, err := io.CopyBuffer(&logWriter{file: file}, r, make([]byte, 32*1024))
+	resource.LogError("copy_logs", err)
 }

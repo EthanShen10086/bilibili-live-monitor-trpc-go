@@ -3,13 +3,16 @@
 package monitor
 
 import (
-	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
+	"golang.org/x/sys/unix"
 )
 
-// Redirect descriptors, so framework loggers that cached stdout/stderr are captured too.
+// CaptureManagedLogs redirects descriptors, including cached framework log streams.
 func CaptureManagedLogs(root string) (func(), error) {
 	type stream struct {
 		fd, saved int
@@ -20,8 +23,8 @@ func CaptureManagedLogs(root string) (func(), error) {
 	restore := func() {
 		once.Do(func() {
 			for _, s := range streams {
-				unix.Dup2(s.saved, s.fd)
-				unix.Close(s.saved)
+				resource.LogError("restore_log_descriptor", unix.Dup2(s.saved, s.fd))
+				resource.LogError("restore_log_descriptor", unix.Close(s.saved))
 			}
 			for _, s := range streams {
 				<-s.done
@@ -43,18 +46,18 @@ func CaptureManagedLogs(root string) (func(), error) {
 		unix.CloseOnExec(saved)
 		r, w, e := os.Pipe()
 		if e != nil {
-			unix.Close(saved)
+			resource.LogError("restore_log_descriptor", unix.Close(saved))
 			restore()
 			return nil, e
 		}
 		if e = unix.Dup2(int(w.Fd()), fd); e != nil {
-			r.Close()
-			w.Close()
-			unix.Close(saved)
+			resource.Close(r)
+			resource.Close(w)
+			resource.LogError("restore_log_descriptor", unix.Close(saved))
 			restore()
 			return nil, e
 		}
-		w.Close()
+		resource.Close(w)
 		done := make(chan struct{})
 		streams = append(streams, stream{fd, saved, done})
 		go copyLogs(file, r, done)

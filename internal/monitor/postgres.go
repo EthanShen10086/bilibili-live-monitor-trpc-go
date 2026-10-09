@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -20,7 +22,7 @@ import (
 var platformSchema string
 var ErrLeaseLost = errors.New("platform lease lost")
 
-// The database clock controls lease expiry. Tokens fence observation writes and task completion.
+// PostgresStore uses the database clock and fencing tokens for observation and job leases.
 type PostgresStore struct {
 	DB           *sql.DB
 	ctx          context.Context
@@ -42,14 +44,12 @@ func OpenPostgres(ctx context.Context, c Config) (*PostgresStore, error) {
 	defer cancel()
 	tx, err := db.BeginTx(cc, nil)
 	if err != nil {
-		db.Close()
+		resource.Close(db)
 		return nil, fmt.Errorf("PostgreSQL connection failed")
 	}
-	defer tx.Rollback()
-	// Serialize additive migrations even when several replicas start together.
-	if _, err = tx.ExecContext(cc, "SELECT pg_advisory_xact_lock(16160019029)"); err == nil {
-		_, err = tx.ExecContext(cc, platformSchema)
-	}
+	defer resource.Rollback(tx)
+	apply := c.Platform.Postgres.AutoMigrate == nil || *c.Platform.Postgres.AutoMigrate
+	err = migratePlatform(cc, tx, apply)
 	if err == nil {
 		_, err = tx.ExecContext(cc, "INSERT INTO lm_scopes(scope,room,binding) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", s.Scope, c.Subscription.RoomID, subscriptionBinding(c))
 	}
@@ -65,43 +65,49 @@ func OpenPostgres(ctx context.Context, c Config) (*PostgresStore, error) {
 		err = tx.Commit()
 	}
 	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("PostgreSQL schema or subscription binding failed")
+		resource.Close(db)
+		return nil, fmt.Errorf("PostgreSQL schema or subscription binding failed: %w", err)
 	}
 	return s, nil
 }
+
 func (s *PostgresStore) timeout() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(s.ctx, 5*time.Second)
 }
+
 func (s *PostgresStore) Close() error {
 	cc, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	s.DB.ExecContext(cc, "UPDATE lm_scopes SET lease_until=clock_timestamp() WHERE scope=$1 AND owner=$2", s.Scope, s.Owner)
-	return s.DB.Close()
+	_, err := s.DB.ExecContext(cc, "UPDATE lm_scopes SET lease_until=clock_timestamp() WHERE scope=$1 AND owner=$2", s.Scope, s.Owner)
+	return errors.Join(err, s.DB.Close())
 }
+
 func (s *PostgresStore) Leadership() (bool, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
 	var owner string
 	err := s.DB.QueryRowContext(cc, `UPDATE lm_scopes SET owner=$2,lease_until=clock_timestamp()+interval '60 seconds'
  WHERE scope=$1 AND (owner=$2 OR lease_until<=clock_timestamp()) RETURNING owner`, s.Scope, s.Owner).Scan(&owner)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return err == nil, err
 }
+
 func (s *PostgresStore) guard(ctx context.Context, tx *sql.Tx) error {
 	var owner string
 	err := tx.QueryRowContext(ctx, "SELECT owner FROM lm_scopes WHERE scope=$1 AND lease_until>clock_timestamp() FOR UPDATE", s.Scope).Scan(&owner)
-	if err == sql.ErrNoRows || err == nil && owner != s.Owner {
+	if errors.Is(err, sql.ErrNoRows) || err == nil && owner != s.Owner {
 		return ErrLeaseLost
 	}
 	return err
 }
+
 func (s *PostgresStore) bump(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, "UPDATE lm_scopes SET version=version+1 WHERE scope=$1", s.Scope)
 	return err
 }
+
 func (s *PostgresStore) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -109,17 +115,17 @@ func (s *PostgresStore) Observe(o Observation, catchup bool, ttl int) (bool, err
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	if err = s.guard(cc, tx); err != nil {
 		return false, err
 	}
 	var live int
 	var start, key sql.NullString
 	err = tx.QueryRowContext(cc, "SELECT live,start,key FROM lm_observations WHERE scope=$1 AND room=$2", s.Scope, o.RoomID).Scan(&live, &start, &key)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
-	missing := err == sql.ErrNoRows
+	missing := errors.Is(err, sql.ErrNoRows)
 	k, actual := "", o.Start
 	if o.Live {
 		if o.Start != "" {
@@ -151,14 +157,21 @@ func (s *PostgresStore) Observe(o Observation, catchup bool, ttl int) (bool, err
 		}
 	}
 	added := false
-	if k != "" && !(o.Live && live == 1 && key.Valid && key.String == k) {
+	sameSession := o.Live && live == 1 && key.Valid && key.String == k
+	if k != "" && !sameSession {
 		o.Start = actual
-		b, _ := json.Marshal(Notice{o, k, catchup})
+		b, err := json.Marshal(Notice{o, k, catchup})
+		if err != nil {
+			return false, err
+		}
 		r, e := tx.ExecContext(cc, "INSERT INTO lm_jobs(scope,key,payload,next,expires) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", s.Scope, k, string(b), o.At, o.At+int64(ttl)*60000)
 		if e != nil {
 			return false, e
 		}
-		n, _ := r.RowsAffected()
+		n, err := r.RowsAffected()
+		if err != nil {
+			return false, err
+		}
 		added = n > 0
 	}
 	if changed || added {
@@ -168,13 +181,14 @@ func (s *PostgresStore) Observe(o Observation, catchup bool, ttl int) (bool, err
 	}
 	return added, tx.Commit()
 }
+
 func (s *PostgresStore) PollingPhase(room int64) (string, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
 	var live int
 	var status sql.NullString
 	err := s.DB.QueryRowContext(cc, "SELECT o.live,j.status FROM lm_observations o LEFT JOIN lm_jobs j ON o.scope=j.scope AND o.key=j.key WHERE o.scope=$1 AND o.room=$2", s.Scope, room).Scan(&live, &status)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "awaiting_start", nil
 	}
 	if err != nil {
@@ -197,7 +211,7 @@ func (s *PostgresStore) claim(now time.Time, key string) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	if err := s.lockScope(cc, tx); err != nil {
 		return nil, err
 	}
@@ -205,14 +219,17 @@ func (s *PostgresStore) claim(now time.Time, key string) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	expired, _ := r.RowsAffected()
+	expired, err := r.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
 	token := ID()
 	var j Job
 	err = tx.QueryRowContext(cc, `WITH selected AS (SELECT key FROM lm_jobs WHERE scope=$1 AND status='pending' AND next<=$2 AND expires>$2
  AND lease_until<=clock_timestamp() AND ($4='' OR key=$4) ORDER BY next,key FOR UPDATE SKIP LOCKED LIMIT 1)
  UPDATE lm_jobs j SET claim=$3,lease_until=clock_timestamp()+interval '60 seconds' FROM selected x
  WHERE j.scope=$1 AND j.key=x.key RETURNING j.key,j.payload,j.attempts,j.expires`, s.Scope, now.UnixMilli(), token, key).Scan(&j.Key, &j.Payload, &j.Attempts, &j.Expires)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	found := err == nil
@@ -232,6 +249,7 @@ func (s *PostgresStore) claim(now time.Time, key string) (*Job, error) {
 	s.mu.Unlock()
 	return &j, nil
 }
+
 func (s *PostgresStore) Complete(key, status, code string, next int64, attempt bool) error {
 	s.mu.Lock()
 	token := s.claims[key]
@@ -245,7 +263,7 @@ func (s *PostgresStore) Complete(key, status, code string, next int64, attempt b
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	if err := s.lockScope(cc, tx); err != nil {
 		return err
 	}
@@ -258,7 +276,10 @@ func (s *PostgresStore) Complete(key, status, code string, next int64, attempt b
 	if err != nil {
 		return err
 	}
-	n, _ := r.RowsAffected()
+	n, err := r.RowsAffected()
+	if err != nil {
+		return err
+	}
 	if n != 1 {
 		return ErrLeaseLost
 	}
@@ -278,8 +299,9 @@ func (s *PostgresStore) Failed(j *Job, e error, now time.Time) error {
 	if Retryable(e) {
 		status = "pending"
 	}
-	return s.Complete(j.Key, status, e.Error(), now.Add(Backoff(j.Attempts+1, 5)).UnixMilli(), true)
+	return s.Complete(j.Key, status, e.Error(), now.Add(RetryDelay(e, j.Attempts+1, 5)).UnixMilli(), true)
 }
+
 func (s *PostgresStore) Retry(now time.Time) (int64, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -287,7 +309,7 @@ func (s *PostgresStore) Retry(now time.Time) (int64, error) {
 	if e != nil {
 		return 0, e
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	if err := s.lockScope(cc, tx); err != nil {
 		return 0, err
 	}
@@ -295,7 +317,10 @@ func (s *PostgresStore) Retry(now time.Time) (int64, error) {
 	if e != nil {
 		return 0, e
 	}
-	n, _ := r.RowsAffected()
+	n, err := r.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
 	if n > 0 {
 		if e = s.bump(cc, tx); e != nil {
 			return 0, e
@@ -303,6 +328,7 @@ func (s *PostgresStore) Retry(now time.Time) (int64, error) {
 	}
 	return n, tx.Commit()
 }
+
 func (s *PostgresStore) DataVersion() (int64, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -310,6 +336,7 @@ func (s *PostgresStore) DataVersion() (int64, error) {
 	e := s.DB.QueryRowContext(cc, "SELECT version FROM lm_scopes WHERE scope=$1", s.Scope).Scan(&v)
 	return v, e
 }
+
 func (s *PostgresStore) Counts() (map[string]int, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -317,7 +344,7 @@ func (s *PostgresStore) Counts() (map[string]int, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer resource.Close(rows)
 	m := map[string]int{}
 	for rows.Next() {
 		var k string
@@ -329,6 +356,7 @@ func (s *PostgresStore) Counts() (map[string]int, error) {
 	}
 	return m, rows.Err()
 }
+
 func (s *PostgresStore) NextWake() (time.Time, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -339,6 +367,7 @@ func (s *PostgresStore) NextWake() (time.Time, error) {
 	}
 	return time.UnixMilli(at.Int64), nil
 }
+
 func (s *PostgresStore) NextCleanupAt(days int, now time.Time) (time.Time, error) {
 	if days == 0 {
 		return time.Time{}, nil
@@ -352,6 +381,7 @@ func (s *PostgresStore) NextCleanupAt(days int, now time.Time) (time.Time, error
 	}
 	return Earliest(now.Add(24*time.Hour), time.UnixMilli(last).Add(24*time.Hour)), e
 }
+
 func (s *PostgresStore) CleanupHistory(days int, now time.Time) (int64, error) {
 	if days == 0 {
 		return 0, nil
@@ -362,7 +392,7 @@ func (s *PostgresStore) CleanupHistory(days int, now time.Time) (int64, error) {
 	if e != nil {
 		return 0, e
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	var last int64
 	if e = tx.QueryRowContext(cc, "SELECT last_cleanup FROM lm_scopes WHERE scope=$1 FOR UPDATE", s.Scope).Scan(&last); e != nil {
 		return 0, e
@@ -374,7 +404,10 @@ func (s *PostgresStore) CleanupHistory(days int, now time.Time) (int64, error) {
 	if e != nil {
 		return 0, e
 	}
-	n, _ := r.RowsAffected()
+	n, err := r.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
 	if _, e = tx.ExecContext(cc, "UPDATE lm_scopes SET last_cleanup=$2,version=version+1 WHERE scope=$1", s.Scope, now.UnixMilli()); e != nil {
 		return 0, e
 	}
@@ -389,7 +422,7 @@ func (s *PostgresStore) Outbox() (map[string]string, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer resource.Close(rows)
 	m := map[string]string{}
 	for rows.Next() {
 		var k, p string
@@ -400,6 +433,7 @@ func (s *PostgresStore) Outbox() (map[string]string, error) {
 	}
 	return m, rows.Err()
 }
+
 func (s *PostgresStore) Published(key string) error {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -415,7 +449,7 @@ func subscriptionBinding(c Config) string {
 		p := c.Notification.Private
 		target = []string{c.Notification.Mode, os.Getenv(p.AppID), p.IDType, os.Getenv(p.ID)}
 	}
-	b, _ := json.Marshal(target)
+	b := jsonBody(target)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -423,4 +457,12 @@ func subscriptionBinding(c Config) string {
 func (s *PostgresStore) lockScope(ctx context.Context, tx *sql.Tx) error {
 	var scope string
 	return tx.QueryRowContext(ctx, "SELECT scope FROM lm_scopes WHERE scope=$1 FOR UPDATE", s.Scope).Scan(&scope)
+}
+
+func (s *PostgresStore) OldestPending() (int64, error) {
+	cc, cancel := s.timeout()
+	defer cancel()
+	var oldest sql.NullInt64
+	err := s.DB.QueryRowContext(cc, "SELECT MIN((payload::jsonb->>'detectedAt')::bigint) FROM lm_jobs WHERE scope=$1 AND status='pending'", s.Scope).Scan(&oldest)
+	return oldest.Int64, err
 }

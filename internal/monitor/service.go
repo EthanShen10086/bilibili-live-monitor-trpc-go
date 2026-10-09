@@ -3,13 +3,23 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 type Status struct {
+	OldestPending         int64  `json:"oldest_pending_at,omitempty"`
+	Progress              int64  `json:"last_progress_at,omitempty"`
+	Sending               bool   `json:"sending"`
+	NotificationState     string `json:"notification_state,omitempty"`
+	NotificationError     string `json:"notification_error,omitempty"`
+	NotificationFailures  int    `json:"notification_failures"`
+	NotificationAttempts  int    `json:"notification_attempts"`
 	Storage               string `json:"storage"`
 	WorkerRole            string `json:"worker_role"`
 	QueueMode             string `json:"queue_mode"`
@@ -51,7 +61,37 @@ func ReadStatus(root string) (Status, error) {
 	e = json.Unmarshal(b, &s)
 	return s, e
 }
-func Run(ctx context.Context, root string, c Config, h *HTTP) error {
+
+func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, deps Dependencies) (runErr error) {
+	defaults := defaultDependencies(c, h)
+	if deps.Detector == nil {
+		deps.Detector = defaults.Detector
+	}
+	if deps.Notifier == nil {
+		deps.Notifier = defaults.Notifier
+	}
+	if deps.Clock == nil {
+		deps.Clock = defaults.Clock
+	}
+	if deps.OpenRepository == nil {
+		deps.OpenRepository = defaults.OpenRepository
+	}
+	if deps.OpenQueue == nil {
+		deps.OpenQueue = defaults.OpenQueue
+	}
+	nowTime := deps.Clock.Now
+	if deps.Observer == nil {
+		deps.Observer = noopObserver{}
+	}
+	deps.Detector = observedDetector{deps.Detector, deps.Observer}
+	deps.Notifier = observedNotifier{deps.Notifier, deps.Observer}
+	lifeCtx, cancelLife := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelLife()
+	defer func() {
+		if recover() != nil {
+			runErr = fmt.Errorf("worker panicked")
+		}
+	}()
 	if e := c.Platform.Validate(c); e != nil {
 		return e
 	}
@@ -63,28 +103,31 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 		return e
 	}
 	defer release()
-	db, e := OpenRepository(ctx, root, c)
+	db, e := deps.OpenRepository(lifeCtx, root, c)
 	if e != nil {
 		return e
 	}
-	defer db.Close()
-	host, _ := os.Hostname()
-	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: time.Now().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
+	defer resource.Close(db)
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: nowTime().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
 
 	s.Storage, s.WorkerRole, s.QueueMode = c.Platform.StorageMode(), c.Platform.WorkerRole(), c.Platform.QueueMode()
-	pg, distributed := db.(*PostgresStore)
+	leader, distributed := db.(Leadership)
 	var streams TaskQueue
 	if c.Platform.QueueMode() == "redis_streams" {
-		streams, e = OpenStreamQueue(c, pg)
+		streams, e = deps.OpenQueue(c, db)
 		if e != nil {
 			return e
 		}
-		defer streams.Close()
+		defer resource.Close(streams)
 	}
 	var nextStream time.Time
 	s.ResourceSafetyVersion = 1
 	s.RetentionDays = c.HistoryRetentionDays()
-	nextCleanup, e := db.NextCleanupAt(c.HistoryRetentionDays(), time.Now())
+	nextCleanup, e := db.NextCleanupAt(c.HistoryRetentionDays(), nowTime())
 	if e != nil {
 		return e
 	}
@@ -98,22 +141,95 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 	s.OptimizationVersion = 1
 	s.HeartbeatSeconds = int(WorkerHeartbeat / time.Second)
 	queue := QueueSchedule{Store: db, Dirty: true}
-	if e = queue.Refresh(time.Now()); e != nil {
+	if e = queue.Refresh(nowTime()); e != nil {
 		return e
 	}
-	writer := StatusWriter{File: filepath.Join(root, "var/status.json")}
+	writer := newStatusReporter(filepath.Join(root, "var/status.json"))
 	report := func() error {
 		s.Pending = queue.Counts
+		s.OldestPending = queue.OldestPending
 		s.QueueRefreshes = queue.Refreshes
-		return writer.Report(&s, time.Now(), false)
+		s.Progress = nowTime().UnixMilli()
+		s.Updated = s.Progress
+		deps.Observer.Report(s)
+		return writer.Report(s, nowTime(), false)
 	}
-	defer func() { s.Running = false; s.State = "stopped"; writer.Report(&s, time.Now(), true) }()
-	notify := Feishu{Config: c, HTTP: h}
+	defer func() {
+		s.Running = false
+		s.State = "stopped"
+		deps.Observer.Report(s)
+		if err := writer.Close(s, nowTime()); runErr == nil {
+			runErr = err
+		}
+	}()
+	notify := deps.Notifier
+	deliveryDone := make(chan deliveryResult, 1)
+	var inFlight *Job
+	var cancelDelivery context.CancelFunc
+	finishDelivery := func(result deliveryResult) error {
+		inFlight = nil
+		if cancelDelivery != nil {
+			cancelDelivery()
+		}
+		s.Sending = false
+		queue.Dirty = true
+		if result.err == nil {
+			if err := db.Sent(result.job.Key); err != nil {
+				return err
+			}
+			s.LastSent = nowTime().UnixMilli()
+			s.NotificationError = ""
+			s.NotificationState = "healthy"
+			s.NotificationFailures = 0
+			Event(root, "notice_sent", map[string]any{"key": result.job.Key, "sent_at": s.LastSent})
+		} else {
+			if err := db.Failed(result.job, result.err, nowTime()); err != nil {
+				return err
+			}
+			s.NotificationError = result.err.Error()
+			s.NotificationState = "blocked"
+			if Retryable(result.err) {
+				s.NotificationState = "retrying"
+			}
+			s.NotificationFailures++
+			Event(root, "notification_error", s.NotificationError)
+		}
+		if result.messageID != "" && streams != nil {
+			if err := streams.Ack(lifeCtx, result.messageID); err != nil {
+				s.QueueError = "Redis acknowledgement unavailable; task state is durable"
+			}
+		}
+		return nil
+	}
+	defer func() {
+		if inFlight != nil {
+			var result deliveryResult
+			select {
+			case result = <-deliveryDone:
+			case <-time.After(42 * time.Second):
+				cancelDelivery()
+				runErr = fmt.Errorf("notification drain timed out")
+				return
+			}
+			if err := finishDelivery(result); runErr == nil {
+				runErr = err
+			}
+			if err := queue.Refresh(nowTime()); runErr == nil {
+				runErr = err
+			}
+			s.Pending = queue.Counts
+			s.OldestPending = queue.OldestPending
+		}
+	}()
+	s.NotificationState = "healthy"
+	if err := report(); err != nil {
+		return err
+	}
 	var next time.Time
 	var currentRoomID int64
 	currentInterval := c.PollingSeconds()
 	updateCadence := func() (bool, error) {
-		if c.Detector.Mode != "polling" || currentRoomID == 0 || !c.InWindow(time.Now()) {
+		if c.Detector.Mode != "polling" || currentRoomID == 0 || !c.InWindow(nowTime()) {
 			return false, nil
 		}
 		phase, err := db.PollingPhase(currentRoomID)
@@ -146,14 +262,26 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 		official = nil
 		return nil
 	}
-	defer cleanup()
+	defer func() { runErr = errors.Join(runErr, cleanup()) }()
 	for ctx.Err() == nil {
-		now := time.Now()
+		select {
+		case result := <-deliveryDone:
+			if err := finishDelivery(result); err != nil {
+				return err
+			}
+		default:
+		}
+		if changed, err := updateCadence(); err != nil {
+			return err
+		} else if changed {
+			next = nowTime().Add(time.Duration(currentInterval) * time.Second)
+		}
+		now := nowTime()
 		window := c.InWindow(now) && c.Platform.WorkerRole() != "sender"
 		if distributed && c.Platform.WorkerRole() != "sender" {
-			s.Leadership, e = pg.Leadership()
+			s.Leadership, e = leader.Leadership()
 			if e != nil {
-				return fmt.Errorf("PostgreSQL scheduling unavailable")
+				return fmt.Errorf("scheduling leadership unavailable")
 			}
 			window = window && s.Leadership
 		}
@@ -165,7 +293,9 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				if e = report(); e != nil {
 					return e
 				}
-				Pause(ctx, WorkerHeartbeat)
+				if err := Pause(ctx, WorkerHeartbeat); err != nil {
+					return nil
+				}
 				continue
 			}
 			s.State = "outside_window"
@@ -192,7 +322,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 			wasWindow = true
 			if c.Detector.Mode == "polling" {
 				if !blocked && !now.Before(next) {
-					o, err := h.Probe(ctx, c)
+					o, err := deps.Detector.Probe(ctx, c)
 					if err != nil {
 						failures++
 						blocked = !Retryable(err)
@@ -201,10 +331,10 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							s.State = "blocked"
 						}
 						s.LastError = err.Error()
-						next = time.Now().Add(Backoff(failures, currentInterval))
+						next = nowTime().Add(RetryDelay(e, failures, currentInterval))
 						Event(root, "detector_error", s.LastError)
 					} else {
-						if ctx.Err() == nil && c.InWindow(time.Now()) {
+						if ctx.Err() == nil && c.InWindow(nowTime()) {
 							var added bool
 							added, err = db.Observe(o, catchup, c.Notification.TTL)
 							if err != nil {
@@ -221,7 +351,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 						failures = 0
 						s.State = "healthy"
 						s.LastError = ""
-						next = time.Now().Add(time.Duration(currentInterval) * time.Second)
+						next = nowTime().Add(time.Duration(currentInterval) * time.Second)
 					}
 				}
 			} else {
@@ -240,15 +370,15 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 					if blocked {
 						s.State = "blocked"
 					}
-					next = time.Now().Add(Backoff(failures+1, 10))
+					next = nowTime().Add(Backoff(failures+1, 10))
 				}
 				if !blocked && official == nil && !now.Before(next) {
-					o, err := h.Probe(ctx, c)
+					o, err := deps.Detector.Probe(ctx, c)
 					if err == nil {
 						official = NewOfficial(c, h, o.RoomID)
 						err = official.Start(ctx)
 					}
-					if err == nil && c.InWindow(time.Now()) {
+					if err == nil && c.InWindow(nowTime()) {
 						_, err = db.Observe(o, true, c.Notification.TTL)
 						s.LastObservation = o.At
 						queue.Dirty = true
@@ -261,7 +391,9 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							if e = report(); e != nil {
 								return e
 							}
-							Pause(ctx, WorkerHeartbeat)
+							if err := Pause(ctx, WorkerHeartbeat); err != nil {
+								return nil
+							}
 							continue
 						}
 						failures++
@@ -271,7 +403,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 							s.State = "blocked"
 						}
 						s.LastError = err.Error()
-						next = time.Now().Add(Backoff(failures, 10))
+						next = nowTime().Add(Backoff(failures, 10))
 					} else {
 						failures = 0
 						s.State = "healthy"
@@ -283,7 +415,7 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 					for err == nil {
 						select {
 						case o := <-official.Events:
-							if c.InWindow(time.Now()) {
+							if c.InWindow(nowTime()) {
 								_, err = db.Observe(o, false, c.Notification.TTL)
 								s.LastObservation = o.At
 								queue.Dirty = true
@@ -306,19 +438,19 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 								s.State = "blocked"
 							}
 							s.LastError = err.Error()
-							next = time.Now().Add(Backoff(failures, 10))
+							next = nowTime().Add(Backoff(failures, 10))
 						}
 					}
 				}
 			}
 		}
-		if !nextCleanup.IsZero() && !time.Now().Before(nextCleanup) {
-			removed, err := db.CleanupHistory(c.HistoryRetentionDays(), time.Now())
+		if !nextCleanup.IsZero() && !nowTime().Before(nextCleanup) {
+			removed, err := db.CleanupHistory(c.HistoryRetentionDays(), nowTime())
 			if err != nil {
 				return err
 			}
 			queue.Dirty = queue.Dirty || removed > 0
-			nextCleanup, e = db.NextCleanupAt(c.HistoryRetentionDays(), time.Now())
+			nextCleanup, e = db.NextCleanupAt(c.HistoryRetentionDays(), nowTime())
 			if e != nil {
 				return e
 			}
@@ -326,15 +458,15 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				Event(root, "history_cleaned", removed)
 			}
 		}
-		if e = queue.Refresh(time.Now()); e != nil {
+		if e = queue.Refresh(nowTime()); e != nil {
 			return e
 		}
 		var job *Job
 		messageID := ""
-		if streams != nil && !time.Now().Before(nextStream) {
-			nextStream = time.Now().Add(5 * time.Second)
+		if streams != nil && !nowTime().Before(nextStream) {
+			nextStream = nowTime().Add(5 * time.Second)
 			err := streams.Publish(ctx)
-			if err == nil && c.Platform.WorkerRole() != "detector" {
+			if err == nil && c.Platform.WorkerRole() != "detector" && inFlight == nil && ctx.Err() == nil {
 				job, messageID, err = streams.Receive(ctx)
 			}
 			if err != nil {
@@ -346,8 +478,8 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				queue.Dirty = true
 			}
 		}
-		if job == nil && c.Platform.WorkerRole() != "detector" && !queue.NextDue.IsZero() && !time.Now().Before(queue.NextDue) {
-			job, e = db.Due(time.Now())
+		if job == nil && inFlight == nil && ctx.Err() == nil && c.Platform.WorkerRole() != "detector" && !queue.NextDue.IsZero() && !nowTime().Before(queue.NextDue) {
+			job, e = db.Due(nowTime())
 			if e != nil {
 				return e
 			}
@@ -358,56 +490,37 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 			if json.Unmarshal([]byte(job.Payload), &n) != nil {
 				return fmt.Errorf("invalid durable notification payload")
 			}
-			// Task lease is 60 seconds; bound the entire token-refresh + send sequence to 40 seconds.
-			sendCtx, cancelSend := context.WithTimeout(ctx, 40*time.Second)
+			sendCtx, cancel := context.WithTimeout(lifeCtx, 40*time.Second)
+			cancelDelivery = cancel
 			sendKey := job.Key
 			if distributed {
-				sendKey = pg.Scope + ":" + job.Key
+				sendKey = c.Platform.SubscriptionID + ":" + job.Key
 			}
-			err := notify.Send(sendCtx, FormatNotice(n, c.Subscription.RoomID), sendKey)
-			cancelSend()
-			if err == nil {
-				if e = db.Sent(job.Key); e != nil {
-					return e
-				}
-				changed, ce := updateCadence()
-				if ce != nil {
-					return ce
-				}
-				if changed && window {
-					next = time.Now().Add(time.Duration(currentInterval) * time.Second)
-				}
-				s.LastSent = time.Now().UnixMilli()
-				Event(root, "notice_sent", map[string]any{"key": job.Key, "sent_at": s.LastSent})
-			} else {
-				if e = db.Failed(job, err, time.Now()); e != nil {
-					return e
-				}
-				Event(root, "notification_error", err.Error())
-			}
-		}
-		if messageID != "" && streams != nil {
-			if err := streams.Ack(ctx, messageID); err != nil {
-				s.QueueError = "Redis acknowledgement unavailable; task state is durable"
-			}
+			inFlight = job
+			s.Sending = true
+			s.NotificationAttempts++
+			go deliver(sendCtx, notify, FormatNotice(n, c.Subscription.RoomID), sendKey, job, messageID, deliveryDone)
 		}
 		s.NextPoll = 0
 		if !next.IsZero() {
 			s.NextPoll = next.UnixMilli()
 		}
-		if e = queue.Refresh(time.Now()); e != nil {
+		if e = queue.Refresh(nowTime()); e != nil {
 			return e
 		}
 		if e = report(); e != nil {
 			return e
 		}
-		after := time.Now()
+		after := nowTime()
 		boundary := after.Truncate(time.Minute).Add(time.Minute)
 		queueDeadline := queue.NextDue
+		if inFlight != nil {
+			queueDeadline = time.Time{}
+		}
 		if c.Platform.WorkerRole() == "detector" {
 			queueDeadline = time.Time{}
 		}
-		deadline := Earliest(writer.LastWrite.Add(WorkerHeartbeat), queue.NextCheck, queueDeadline, nextCleanup, boundary, nextStream)
+		deadline := Earliest(after.Add(WorkerHeartbeat), queue.NextCheck, queueDeadline, nextCleanup, boundary, nextStream)
 		if window && !blocked && (c.Detector.Mode == "polling" || official == nil) {
 			deadline = Earliest(deadline, next)
 		}
@@ -421,13 +534,18 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 			events = official.Events
 			changed = official.Changed
 		}
-		timer := time.NewTimer(max(time.Millisecond, time.Until(deadline)))
+		timer := deps.Clock.NewTimer(max(time.Millisecond, deadline.Sub(nowTime())))
 		select {
 		case <-ctx.Done():
-		case <-timer.C:
+		case result := <-deliveryDone:
+			if err := finishDelivery(result); err != nil {
+				timer.Stop()
+				return err
+			}
+		case <-timer.Channel():
 		case <-changed:
 		case o := <-events:
-			if c.InWindow(time.Now()) && ctx.Err() == nil {
+			if c.InWindow(nowTime()) && ctx.Err() == nil {
 				if _, e = db.Observe(o, false, c.Notification.TTL); e != nil {
 					timer.Stop()
 					return e

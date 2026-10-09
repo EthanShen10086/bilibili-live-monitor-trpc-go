@@ -1,0 +1,14 @@
+{
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {"source.organizeImports": "explicit"}
+  },
+  "go.toolsManagement.autoUpdate": false,
+  "go.testFlags": ["-race", "-timeout=2m"],
+  "gopls": {
+    "gofumpt": true,
+    "staticcheck": true,
+    "local": "github.com/EthanShen10086/bilibili-live-monitor-trpc-go"
+  }
+}

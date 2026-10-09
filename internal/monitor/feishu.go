@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -18,8 +19,9 @@ func FeishuSign(stamp, secret string) string {
 	h := hmac.New(sha256.New, []byte(stamp+"\n"+secret))
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
+
 func FormatNotice(n Notice, room int64) string {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
+	loc := time.FixedZone("Asia/Shanghai", 8*60*60)
 	kind := "开播了"
 	if n.Catchup {
 		kind = "当前正在直播"
@@ -60,6 +62,7 @@ func checked(code *int) error {
 	}
 	return &RemoteError{"Feishu", strconv.Itoa(*code), retry}
 }
+
 func (f *Feishu) access(ctx context.Context) (string, error) {
 	if f.token != "" && time.Until(f.expires) > time.Minute {
 		return f.token, nil
@@ -84,6 +87,7 @@ func (f *Feishu) access(ctx context.Context) (string, error) {
 	f.expires = time.Now().Add(time.Duration(r.Expire) * time.Second)
 	return f.token, nil
 }
+
 func (f *Feishu) Send(ctx context.Context, text, key string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -112,7 +116,8 @@ func (f *Feishu) Send(ctx context.Context, text, key string) error {
 		return checked(r.Code)
 	}
 	e := send()
-	if r, ok := e.(*RemoteError); ok && (r.Code == "99991661" || r.Code == "99991663" || r.Code == "99991668") {
+	var remote *RemoteError
+	if errors.As(e, &remote) && (remote.Code == "99991661" || remote.Code == "99991663" || remote.Code == "99991668") {
 		f.token = ""
 		return send()
 	}

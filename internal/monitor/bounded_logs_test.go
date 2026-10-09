@@ -12,7 +12,7 @@ import (
 
 func TestLogLimitsAndArchives(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "events.log")
-	if e := os.WriteFile(file, make([]byte, 3*1024*1024), 0600); e != nil {
+	if e := os.WriteFile(file, make([]byte, 3*1024*1024), 0o600); e != nil {
 		t.Fatal(e)
 	}
 	for i := 0; i < 140; i++ {
@@ -41,6 +41,7 @@ func TestLogLimitsAndArchives(t *testing.T) {
 		}
 	}
 }
+
 func TestCaptureManagedDescriptors(t *testing.T) {
 	if root := os.Getenv("MONITOR_LOG_TEST_ROOT"); root != "" {
 		cached := os.Stdout

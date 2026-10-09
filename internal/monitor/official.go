@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	"github.com/andybalholm/brotli"
 	"github.com/gorilla/websocket"
 )
@@ -63,6 +65,7 @@ type Official struct {
 func NewOfficial(c Config, h *HTTP, room int64) *Official {
 	return &Official{c: c, h: h, room: room, Events: make(chan Observation, 128), Changed: make(chan struct{}, 1), ready: make(chan struct{}), done: make(chan struct{})}
 }
+
 func (o *Official) setError(e error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -74,6 +77,7 @@ func (o *Official) setError(e error) {
 		}
 	}
 }
+
 func (o *Official) api(ctx context.Context, route string, payload any, out any) error {
 	body := jsonBody(payload)
 	c := o.c.Detector.Official
@@ -102,6 +106,7 @@ func (o *Official) api(ctx context.Context, route string, payload any, out any) 
 	}
 	return nil
 }
+
 func frame(op uint32, b []byte) []byte {
 	r := make([]byte, 16+len(b))
 	binary.BigEndian.PutUint32(r, uint32(len(r)))
@@ -112,6 +117,7 @@ func frame(op uint32, b []byte) []byte {
 	copy(r[16:], b)
 	return r
 }
+
 func DecodeFrames(b []byte, depth int, consume func(uint32, []byte) error) error {
 	if depth > 4 {
 		return fmt.Errorf("compression nesting limit")
@@ -143,7 +149,7 @@ func DecodeFrames(b []byte, depth int, consume func(uint32, []byte) error) error
 			}
 			expanded, e := io.ReadAll(io.LimitReader(r, 4*1024*1024+1))
 			if closer != nil {
-				closer.Close()
+				resource.Close(closer)
 			}
 			if e != nil || len(expanded) > 4*1024*1024 {
 				return fmt.Errorf("expanded frame limit")
@@ -162,6 +168,7 @@ func DecodeFrames(b []byte, depth int, consume func(uint32, []byte) error) error
 	}
 	return nil
 }
+
 func OfficialObservation(body []byte, room int64, at time.Time) (*Observation, error) {
 	var m struct {
 		Cmd  string `json:"cmd"`
@@ -198,6 +205,7 @@ func OfficialObservation(body []byte, room int64, at time.Time) (*Observation, e
 	}
 	return &Observation{room, live, title, NormalizeStart(stamp), at.UnixMilli()}, nil
 }
+
 func (o *Official) Start(ctx context.Context) error {
 	var r struct {
 		Game struct {
@@ -211,7 +219,10 @@ func (o *Official) Start(ctx context.Context) error {
 			Links []string `json:"wss_link"`
 		} `json:"websocket_info"`
 	}
-	app, _ := strconv.ParseInt(os.Getenv(o.c.Detector.Official.AppID), 10, 64)
+	app, err := strconv.ParseInt(os.Getenv(o.c.Detector.Official.AppID), 10, 64)
+	if err != nil || app <= 0 {
+		return &RemoteError{"Official", "invalid_app_id", false}
+	}
 	e := o.api(ctx, "start", map[string]any{"app_id": app, "code": os.Getenv(o.c.Detector.Official.Anchor)}, &r)
 	o.game = r.Game.ID
 	if e != nil {
@@ -230,7 +241,7 @@ func (o *Official) Start(ctx context.Context) error {
 	dial := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	ws, resp, e := dial.DialContext(ctx, u.String(), http.Header{})
 	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
+		resource.LogError("websocket_response_close", resp.Body.Close())
 	}
 	if e != nil {
 		return &RemoteError{"Official", "socket_connect", true}
@@ -260,15 +271,19 @@ func (o *Official) Start(ctx context.Context) error {
 		return &RemoteError{"Official", "authentication_timeout", true}
 	}
 }
+
 func (o *Official) send(op uint32, b []byte) error {
 	o.write.Lock()
 	defer o.write.Unlock()
-	o.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := o.ws.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return &RemoteError{"Official", "socket_deadline", true}
+	}
 	if o.ws.WriteMessage(websocket.BinaryMessage, frame(op, b)) != nil {
 		return &RemoteError{"Official", "socket_write", true}
 	}
 	return nil
 }
+
 func (o *Official) read() {
 	defer close(o.done)
 	for {
@@ -317,11 +332,12 @@ func (o *Official) read() {
 		})
 		if e != nil {
 			o.setError(e)
-			o.ws.Close()
+			resource.Close(o.ws)
 			return
 		}
 	}
 }
+
 func (o *Official) heartbeat() {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
@@ -332,12 +348,13 @@ func (o *Official) heartbeat() {
 		case <-t.C:
 			if e := o.send(2, nil); e != nil {
 				o.setError(e)
-				o.ws.Close()
+				resource.Close(o.ws)
 				return
 			}
 		}
 	}
 }
+
 func (o *Official) Tick(ctx context.Context) error {
 	o.mu.Lock()
 	err := o.err
@@ -357,12 +374,16 @@ func (o *Official) Tick(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (o *Official) Stop(ctx context.Context) error {
 	if o.ws != nil {
-		o.ws.Close()
+		resource.Close(o.ws)
 	}
 	if o.game != "" {
-		app, _ := strconv.ParseInt(os.Getenv(o.c.Detector.Official.AppID), 10, 64)
+		app, err := strconv.ParseInt(os.Getenv(o.c.Detector.Official.AppID), 10, 64)
+		if err != nil || app <= 0 {
+			return &RemoteError{"Official", "invalid_app_id", false}
+		}
 		if e := o.api(ctx, "end", map[string]any{"app_id": app, "game_id": o.game}, nil); e != nil {
 			return e
 		}

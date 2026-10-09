@@ -1,6 +1,6 @@
 # 架构、依赖与行为
 
-配置 → 时间窗口 → 轮询或官方事件 → 统一 Observation → SQLite 去重/队列 → 飞书群或应用私聊。
+配置 → 时间窗口 → 轮询或官方事件 → 统一 Observation → Repository（SQLite/PostgreSQL）去重/持久化队列 → 飞书群或应用私聊。
 
 ## 检测
 
@@ -26,8 +26,10 @@
 
 保留 go.mod/go.sum 锁定模块。纯 Go 仍需首次下载并编译较大的 SQLite 模块，构建缓存不是运行依赖。Linux 用 systemd 用户服务和 linger，不要求公网业务端口；Mac 用登录用户 launchd。
 
-无 Redis、独立数据库、网页前端或 AI 模型。建议云资源从 1 vCPU/1 GB 内存起，实际使用量运行后测量；大规模编译可在 Mac 交叉编译，避免占用小服务器内存。
+默认不连接外部 Redis/PostgreSQL；云端平台可选 pgx、go-redis 与 Redis Streams。检测、通知、数据库、队列和时钟通过接口注入；发送协程独立运行，结果由协调循环提交。独立 observability 包提供 Prometheus 和可选 OTLP，tRPC host 初始化插件、恢复过滤器和进度看门狗。建议云资源从 1 vCPU/1 GB 内存起，实际使用量运行后测量；大规模编译可在 Mac 交叉编译，避免占用小服务器内存。
 
 ## 独立仓库边界
 
 本仓库使用独立模块路径 github.com/EthanShen10086/bilibili-live-monitor-trpc-go，不 replace 到相邻目录、不导入另一个实现仓库。共享业务源码在拆分时复制进来，后续分别维护。每次公共行为修复需在两个仓库分别验证，不会自动同步。
+
+生产行为与运维边界以 [上线手册](PRODUCTION_READINESS.md) 为准。

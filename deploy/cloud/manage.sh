@@ -6,7 +6,7 @@ ACTION=${2:-}
 case "$MODE" in
   light) ;;
   platform) ;;
-  *) printf '%s\n' 'Usage: manage.sh light|platform prepare|check|up|down|logs|workers-up|nginx-check|nginx-up'; exit 1 ;;
+  *) printf '%s\n' 'Usage: manage.sh light|platform prepare|check|migrate|up|down|logs|workers-up|nginx-check|nginx-up'; exit 1 ;;
 esac
 case "$ACTION" in
   prepare)
@@ -33,6 +33,11 @@ else
 fi
 case "$ACTION" in
   check) "$@" config --quiet ;;
+  migrate)
+    [ "$MODE" = platform ] || { printf '%s\n' 'migrate requires platform mode'; exit 1; }
+    "$@" up -d --wait postgres redis
+    "$@" build monitor
+    "$@" run --rm --no-deps --entrypoint /app/monitor monitor --root /app platform-migrate ;;
   up) "$@" config --quiet; "$@" up -d --build ;;
   workers-up)
     [ "$MODE" = platform ] || { printf '%s\n' 'workers require platform profile'; exit 1; }
