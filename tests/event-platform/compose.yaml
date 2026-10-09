@@ -1,0 +1,31 @@
+services:
+  api:
+    environment: {EVENT_ADMIN_SUBJECTS: '00000000-0000-4000-8000-000000000001'}
+  sender:
+    environment: {EVENT_SMTP_ALLOWED_HOSTS: mailpit}
+  mock:
+    image: python:3.13.7-alpine
+    command: [python3, /test/mock.py]
+    volumes:
+      - ./../../tests/event-platform/mock.py:/test/mock.py:ro
+      - ${TLS_DIR}:/certs:ro
+    ports: ['127.0.0.1:19443:443']
+    networks:
+      backend:
+        aliases: [open.feishu.cn, api.live.bilibili.com]
+    mem_limit: 96m
+  mailpit:
+    image: axllent/mailpit:v1.31.4
+    environment:
+      MP_SMTP_TLS_CERT: /certs/tls.crt
+      MP_SMTP_TLS_KEY: /certs/tls.key
+      MP_SMTP_REQUIRE_STARTTLS: 'true'
+    volumes: ['${TLS_DIR}:/certs:ro']
+    ports: ['127.0.0.1:18025:8025']
+    networks: [backend]
+    mem_limit: 128m
+  postgres:
+    ports: ['127.0.0.1:25439:5432']
+  alertmanager:
+    volumes:
+      - ./generated/alertmanager-test.yaml:/etc/alertmanager/config.yaml:ro

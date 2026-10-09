@@ -1,0 +1,42 @@
+name: event-platform
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod}
+      - name: Prepare disposable identity and TLS
+        run: |
+          python3 tests/event-platform/prepare.py
+          echo '127.0.0.1 api.localhost auth.localhost grafana.localhost' | sudo tee -a /etc/hosts
+      - name: Actual APISIX platform
+        working-directory: deploy/event-platform
+        run: docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile observability up -d --build
+      - name: PostgreSQL module contracts
+        run: |
+          export EVENT_TEST_POSTGRES="postgres://platform:$(python3 -c "from pathlib import Path; print(dict(line.split('=',1) for line in Path('deploy/event-platform/.env').read_text().splitlines())['PG_PASSWORD'].strip(chr(39)))")@127.0.0.1:25439/platform?sslmode=disable"
+          go test -race -tags=eventintegration ./internal/eventplatform/store
+      - name: APISIX ingress and event path
+        run: python3 tests/event-platform/contracts.py apisix
+      - name: Switch ingress to Nginx
+        working-directory: deploy/event-platform
+        run: |
+          docker compose --profile apisix stop apisix
+          docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile nginx --profile observability up -d nginx
+      - name: Same Nginx contract suite
+        run: python3 tests/event-platform/contracts.py nginx
+      - name: Failure evidence
+        if: failure()
+        working-directory: deploy/event-platform
+        run: |
+          docker compose --profile apisix --profile nginx --profile observability ps
+          docker compose --profile apisix --profile nginx --profile observability logs --tail=100
+      - name: Cleanup disposable volumes
+        if: always()
+        working-directory: deploy/event-platform
+        run: docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile nginx --profile observability down -v
