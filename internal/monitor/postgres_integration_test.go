@@ -1,3 +1,5 @@
+//go:build integration
+
 package monitor
 
 import (
@@ -20,7 +22,7 @@ func platformConfig(t *testing.T) Config {
 	t.Helper()
 	dsn := os.Getenv("MONITOR_TEST_POSTGRES")
 	if dsn == "" {
-		t.Skip("set MONITOR_TEST_POSTGRES to disposable PostgreSQL")
+		t.Fatal("integration requires disposable MONITOR_TEST_POSTGRES")
 	}
 	c := testConfig(t)
 	c.Deployment.Active = "cloud"
@@ -177,7 +179,7 @@ func TestRedisOutboxAndCacheIntegration(t *testing.T) {
 	c := platformConfig(t)
 	url := os.Getenv("MONITOR_TEST_REDIS")
 	if url == "" {
-		t.Skip("set MONITOR_TEST_REDIS")
+		t.Fatal("integration requires disposable MONITOR_TEST_REDIS")
 	}
 	c.Platform.Redis.URLEnv = "TEST_PLATFORM_REDIS"
 	c.Platform.Cache = "redis"
