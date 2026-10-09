@@ -32,7 +32,7 @@ jobs:
         env:
           MONITOR_TEST_POSTGRES: postgres://monitor:test-only-password@127.0.0.1:5432/monitor?sslmode=disable
           MONITOR_TEST_REDIS: redis://127.0.0.1:6379
-        run: go test -race -tags=integration -timeout=3m -v -coverprofile=coverage.out ./...
+        run: make test-integration
       - uses: actions/upload-artifact@v4
         with:
           name: platform-coverage

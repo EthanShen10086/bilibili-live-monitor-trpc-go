@@ -11,9 +11,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - run: go test -race ./...
-      - run: go vet ./...
-      - run: test -z "$(gofmt -l cmd internal)"
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - run: make tools
+      - run: make verify
       - run: CGO_ENABLED=0 go build -o dist/monitor ./cmd/monitor
       - run: python3 scripts/smoke.py

@@ -2,7 +2,7 @@
 """Check Git's actual upload manifest, without printing file contents."""
 import pathlib, re, subprocess, sys
 root = pathlib.Path(__file__).resolve().parents[1]
-files = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
+files = [str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()] if '--snapshot' in sys.argv else subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
 errors = []
 for name in filter(None, files):
     p = pathlib.PurePosixPath(name)
