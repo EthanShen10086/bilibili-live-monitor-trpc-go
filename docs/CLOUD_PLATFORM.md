@@ -1,8 +1,8 @@
 # tRPC-Go 可扩展云端版：配置、部署与复现
 
 本文范围是 `cmd/monitor` 的单订阅云服务，数据库选择 SQLite/PostgreSQL，缓存独立
-选择 memory/Redis；原 Redis Streams 配置继续兼容。这些组件不是互斥架构。原 Redis
-兼容模式。多租户 Kafka、OIDC、共享检测和回放已经由 `cmd/event-platform` 实现，
+选择 memory/Redis；原 Redis Streams 配置继续兼容。这些组件不是互斥架构。
+多租户 Kafka、OIDC、共享检测和回放已经由 `cmd/event-platform` 实现，
 见 [事件平台部署包](../deploy/event-platform/README.md)。两种入口不要混用配置/迁移命令。
 Mac Node 到云端的正式切换见 [交接手册](STANDALONE_DEPLOYMENT.md)。
 
