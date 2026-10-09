@@ -37,3 +37,11 @@ services:
     environment: {EVENT_TRACE_SAMPLE_RATIO: '1'}
   relay:
     environment: {EVENT_TRACE_SAMPLE_RATIO: '1'}
+  kafka-contracts:
+    image: alpine:3.22
+    profiles: [contracts]
+    entrypoint: [/test/kafka.test]
+    environment: {EVENT_TEST_KAFKA: 'kafka:9092'}
+    volumes: [./generated/kafka.test:/test/kafka.test:ro]
+    networks: [backend]
+    mem_limit: 256m

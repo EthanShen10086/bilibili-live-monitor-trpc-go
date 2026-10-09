@@ -21,6 +21,11 @@ jobs:
         run: |
           export EVENT_TEST_POSTGRES="postgres://platform:$(python3 -c "from pathlib import Path; print(dict(line.split('=',1) for line in Path('deploy/event-platform/.env').read_text().splitlines())['PG_PASSWORD'].strip(chr(39)))")@127.0.0.1:25439/platform?sslmode=disable"
           go test -race -tags=eventintegration ./internal/eventplatform/store
+      - name: Kafka crash duplicate poison and rebalance contracts
+        run: |
+          CGO_ENABLED=0 go test -c -tags=eventintegration -o deploy/event-platform/generated/kafka.test ./internal/eventplatform/bus
+          cd deploy/event-platform
+          docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile contracts run --rm kafka-contracts -test.v -test.timeout=4m
       - name: APISIX ingress and event path
         run: python3 tests/event-platform/contracts.py apisix
       - name: Switch ingress to Nginx
