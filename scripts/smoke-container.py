@@ -5,7 +5,7 @@ repo = pathlib.Path(__file__).resolve().parents[1]
 name = 'bili-smoke-' + uuid.uuid4().hex[:12]
 volume = name + '-state'
 def docker(*args):
-    return subprocess.check_output(['docker', *args], text=True).strip()
+    return subprocess.check_output(['docker', *args], text=True, stderr=subprocess.STDOUT).strip()
 with tempfile.TemporaryDirectory(prefix=name) as tmp:
     root = pathlib.Path(tmp)
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).isoweekday()
