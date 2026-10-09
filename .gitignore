@@ -34,3 +34,7 @@
 # Python tooling cache
 **/__pycache__/
 **/*.pyc
+
+# Generated platform TLS, credentials and deployment configuration.
+/deploy/event-platform/generated/
+/deploy/event-platform/.env
