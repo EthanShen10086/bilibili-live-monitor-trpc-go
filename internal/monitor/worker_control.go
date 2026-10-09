@@ -17,6 +17,9 @@ type StatusWriter struct {
 func (w *StatusWriter) Report(s *Status, now time.Time, force bool) error {
 	snapshot := *s
 	snapshot.Updated = 0
+	// Progress advances on every completed loop, including minute-boundary wakes.
+	// Persist it with the heartbeat without making an idle wake a semantic change.
+	snapshot.Progress = 0
 	b, e := json.Marshal(snapshot)
 	if e != nil {
 		return e
