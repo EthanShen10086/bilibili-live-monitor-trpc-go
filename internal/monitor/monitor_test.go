@@ -256,7 +256,7 @@ func TestEnvPermissionsAndPrecedence(t *testing.T) {
 }
 func TestServiceTemplates(t *testing.T) {
 	p, u := ServiceFiles(`/tmp/a & "b"`, "/bin/monitor")
-	if !strings.Contains(p, "&amp;") || !strings.Contains(p, "KeepAlive") || !strings.Contains(u, "Restart=always") || !strings.Contains(u, "StartLimitIntervalSec=0") {
+	if !strings.Contains(p, "&amp;") || !strings.Contains(p, "KeepAlive") || !strings.Contains(u, "Restart=on-failure") || !strings.Contains(u, "TimeoutStopSec=80") || !strings.Contains(u, "StartLimitIntervalSec=0") {
 		t.Fatal("templates")
 	}
 }

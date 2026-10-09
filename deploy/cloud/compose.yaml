@@ -18,7 +18,7 @@ services:
       - monitor-state:/app/var
     mem_limit: 256m
     cpus: 0.50
-    stop_grace_period: 45s
+    stop_grace_period: 80s
     logging: &bounded-logs
       driver: json-file
       options: {max-size: "2m", max-file: "3"}
