@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,11 @@ import (
 )
 
 func TestMetricsAndSpansExcludeProviderSecrets(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+
 	telemetry, err := New(context.Background(), monitor.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -47,6 +53,9 @@ func TestMetricsAndSpansExcludeProviderSecrets(t *testing.T) {
 	spans := exporter.GetSpans()
 	if len(spans) != 2 || spans[0].Parent.TraceID() != spans[1].SpanContext.TraceID() || spans[1].Status.Code != codes.Error {
 		t.Fatalf("trace hierarchy/error status: %+v", spans)
+	}
+	if strings.Contains(logs.String(), "secret-webhook-token") || !strings.Contains(logs.String(), spans[1].SpanContext.TraceID().String()) {
+		t.Fatal("secret in logs or missing trace correlation")
 	}
 	for _, span := range spans {
 		if strings.Contains(span.Status.Description, "secret") || strings.Contains(fmt.Sprint(span.Attributes), "secret-webhook") {

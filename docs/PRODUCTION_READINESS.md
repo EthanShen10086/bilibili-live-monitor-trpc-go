@@ -43,7 +43,7 @@ observability:
   service_name: bilibili-live-monitor
 ```
 
-配置标准环境变量 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 指向现有 OTLP HTTP Collector 的 `/v1/traces`；需要鉴权时通过标准 `OTEL_EXPORTER_OTLP_TRACES_HEADERS` 注入，不写进 YAML/仓库。默认关闭 trace；队列最多 256 spans，导出超时 3s，退出 flush 最多 5s。记录 detector/notification/http 嵌套 span，仅保留安全的错误类型；并非所有官方 WebSocket 事件都有独立 span。
+配置标准环境变量 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 指向现有 OTLP HTTP Collector 的 `/v1/traces`；需要鉴权时通过标准 `OTEL_EXPORTER_OTLP_TRACES_HEADERS` 注入，不写进 YAML/仓库。默认关闭 trace；队列最多 256 spans，导出超时 3s，退出 flush 最多 5s。记录 detector/notification/http 嵌套 span，失败日志携带 trace/span ID，仅保留安全的错误类型；并非所有官方 WebSocket 事件都有独立 span。
 
 ## 迁移与备份恢复
 

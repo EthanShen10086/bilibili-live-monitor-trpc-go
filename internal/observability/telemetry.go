@@ -4,6 +4,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"sync"
@@ -88,6 +89,10 @@ func (t *Telemetry) Begin(ctx context.Context, op string) (context.Context, func
 			result = "error"
 			span.SetStatus(codes.Error, "operation failed")
 			span.SetAttributes(attribute.String("error.type", fmt.Sprintf("%T", err)))
+		}
+		if err != nil {
+			sc := span.SpanContext()
+			slog.WarnContext(ctx, "operation_failed", "operation", op, "error_type", fmt.Sprintf("%T", err), "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
 		}
 		t.operations.WithLabelValues(op, result).Inc()
 		t.duration.WithLabelValues(op).Observe(time.Since(start).Seconds())
