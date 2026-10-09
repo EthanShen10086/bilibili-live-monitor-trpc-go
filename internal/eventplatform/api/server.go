@@ -15,15 +15,15 @@ import (
 
 	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/eventplatform/domain"
 	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/eventplatform/identity"
-	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/eventplatform/store"
 	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 type Server struct {
-	Control       store.Control
-	Notifications store.Notifications
-	Projections   store.Projections
+	Control       ControlRepository
+	Notifications NotificationRepository
+	Projections   ProjectionRepository
+	Ready         func(context.Context) error
 	Verify        identity.Verifier
 	RetentionDays int
 	Metrics       http.Handler
@@ -117,7 +117,7 @@ func (s *Server) Handler() *http.ServeMux {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 		defer cancel()
 		status := http.StatusOK
-		if e := s.Control.DB.SQL.PingContext(ctx); e != nil {
+		if s.Ready == nil || s.Ready(ctx) != nil {
 			status = http.StatusServiceUnavailable
 		}
 		write(w, status, map[string]bool{"ready": status == http.StatusOK})

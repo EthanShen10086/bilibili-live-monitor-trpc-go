@@ -65,7 +65,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 		if e != nil {
 			return e
 		}
-		handler := &api.Server{Control: control, Notifications: notifications, Projections: projections, Verify: verify, RetentionDays: c.RetentionDays, Metrics: telemetry.Handler(), Observer: telemetry}
+		handler := &api.Server{Control: control, Notifications: notifications, Projections: projections, Ready: db.SQL.PingContext, Verify: verify, RetentionDays: c.RetentionDays, Metrics: telemetry.Handler(), Observer: telemetry}
 		return serve(ctx, configPath, handler.Handler())
 	}
 	return runWorker(ctx, configPath, db, telemetry, events, notifications, c.RetentionDays, func(ctx context.Context) error {

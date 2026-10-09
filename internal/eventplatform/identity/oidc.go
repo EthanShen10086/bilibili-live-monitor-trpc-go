@@ -4,7 +4,9 @@ package identity
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 
@@ -23,6 +25,9 @@ func New(ctx context.Context, issuer, audience string, admins []string) (*OIDC, 
 	if issuer == "" || audience == "" {
 		return nil, errors.New("OIDC issuer and audience required")
 	}
+	// RemoteKeySet outlives discovery's initialization context. Bound every JWKS
+	// refresh independently so an unavailable issuer cannot stall authorization.
+	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 5 * time.Second})
 	provider, e := oidc.NewProvider(ctx, issuer)
 	if e != nil {
 		return nil, errors.New("OIDC discovery unavailable")
