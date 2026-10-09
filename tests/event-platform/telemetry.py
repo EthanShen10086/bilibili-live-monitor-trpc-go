@@ -31,7 +31,11 @@ def wait(fn, description):
         time.sleep(3)
     raise AssertionError(description + ' not verified')
 
-wait(lambda: (get('http://prometheus:9090/api/v1/query?' + urlencode({'query': 'up{job="live-platform"}'})) or {}).get('data', {}).get('result'), 'Prometheus scrape')
+def healthy_scrapes():
+    results = (get('http://prometheus:9090/api/v1/query?' + urlencode({'query': 'up{job="live-platform"}'})) or {}).get('data', {}).get('result', [])
+    return len(results) == 6 and all(item['value'][1] == '1' for item in results)
+
+wait(healthy_scrapes, 'All six platform Prometheus scrapes')
 logs = wait(lambda: (get('http://loki:3100/loki/api/v1/query_range?' + urlencode({'query': '{service="live-platform"} |= "api_request"', 'limit': 100})) or {}).get('data', {}).get('result'), 'Alloy/Loki log retrieval')
 assert any('trace_id' in item[1] and 'request_id' in item[1] for stream in logs for item in stream['values'])
 traces = wait(lambda: (get('http://tempo:3200/api/search?' + urlencode({'tags': 'service.name=live-platform-api'})) or {}).get('traces'), 'Tempo API trace storage')
