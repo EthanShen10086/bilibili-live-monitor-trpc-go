@@ -40,6 +40,7 @@ type Dependencies struct {
 	Clock          Clock
 	OpenRepository func(context.Context, string, Config) (Repository, error)
 	OpenQueue      func(Config, Repository) (TaskQueue, error)
+	OpenCache      func(Config) (Cache, error)
 	Observer       Observer
 }
 
@@ -77,7 +78,7 @@ func (n observedNotifier) Send(ctx context.Context, text, key string) (err error
 }
 
 func defaultDependencies(c Config, h *HTTP) Dependencies {
-	return Dependencies{Detector: h, Notifier: &Feishu{Config: c, HTTP: h}, Clock: realClock{}, OpenRepository: OpenRepository, OpenQueue: func(c Config, db Repository) (TaskQueue, error) {
+	return Dependencies{Detector: h, Notifier: &Feishu{Config: c, HTTP: h}, Clock: realClock{}, OpenRepository: OpenRepository, OpenCache: OpenCache, OpenQueue: func(c Config, db Repository) (TaskQueue, error) {
 		pg, ok := db.(*PostgresStore)
 		if !ok {
 			return nil, fmt.Errorf("redis streams requires a PostgreSQL repository")

@@ -227,6 +227,23 @@ func TestRedisOutboxAndCacheIntegration(t *testing.T) {
 	if _, ok := cache.Get(context.Background(), "test"); ok {
 		t.Fatal("redis ttl")
 	}
+	probes := 0
+	detector := cachedDetector{cache: cache, now: time.Now, Detector: testDetector(func(context.Context, Config) (Observation, error) {
+		probes++
+		return Observation{RoomID: c.Subscription.RoomID, Live: true, At: time.Now().UnixMilli()}, nil
+	})}
+	for range 2 {
+		if _, err := detector.Probe(context.Background(), c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if probes != 1 {
+		t.Fatal("Redis observation cache did not reduce upstream requests", probes)
+	}
+	cache.Close()
+	if _, err := detector.Probe(context.Background(), c); err != nil || probes != 2 {
+		t.Fatal("runtime cache outage blocked upstream fallback", err, probes)
+	}
 	// A chosen Redis connection failure fails startup, never silently changes configured mode.
 	// Simulate a broken Redis transport after startup; the new session remains claimable from the DB.
 	a.Observe(Observation{RoomID: 1, Live: true, Start: "redis-next-session", At: time.Now().UnixMilli()}, false, 30)
