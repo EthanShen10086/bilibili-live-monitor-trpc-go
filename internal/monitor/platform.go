@@ -24,6 +24,9 @@ type Repository interface {
 	Close() error
 }
 
+// QueueAge is optional so custom repositories can evolve independently.
+type QueueAge interface{ OldestPending() (int64, error) }
+
 type TaskQueue interface {
 	Publish(context.Context) error
 	Receive(context.Context) (*Job, string, error)
@@ -38,7 +41,8 @@ type PlatformConfig struct {
 	Role           string `yaml:"role"`
 	SubscriptionID string `yaml:"subscription_id"`
 	Postgres       struct {
-		DSNEnv string `yaml:"dsn_env"`
+		DSNEnv      string `yaml:"dsn_env"`
+		AutoMigrate *bool  `yaml:"auto_migrate,omitempty"`
 	} `yaml:"postgres"`
 	Redis struct {
 		URLEnv string `yaml:"url_env"`

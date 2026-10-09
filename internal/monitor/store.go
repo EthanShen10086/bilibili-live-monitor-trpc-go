@@ -248,3 +248,9 @@ func (s *Store) CleanupHistory(days int, now time.Time) (int64, error) {
 }
 
 func (s *Store) Close() error { return s.DB.Close() }
+
+func (s *Store) OldestPending() (int64, error) {
+	var oldest sql.NullInt64
+	err := s.DB.QueryRow("SELECT MIN(CAST(json_extract(payload,'$.detectedAt') AS INTEGER)) FROM jobs WHERE status='pending'").Scan(&oldest)
+	return oldest.Int64, err
+}

@@ -19,6 +19,12 @@ services:
     mem_limit: 256m
     cpus: 0.50
     stop_grace_period: 80s
+    healthcheck:
+      test: [CMD, /app/monitor, --root, /app, healthcheck, live]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
     logging: &bounded-logs
       driver: json-file
       options: {max-size: "2m", max-file: "3"}

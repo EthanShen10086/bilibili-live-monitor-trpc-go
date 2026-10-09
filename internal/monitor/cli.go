@@ -87,7 +87,7 @@ func CLI(ctx context.Context, o Options) error {
 		cmd = o.Args[0]
 	}
 	if cmd == "help" {
-		fmt.Println("monitor check-config [--probe] [--official-auth]\nmonitor platform-import-sqlite SOURCE_ROOT (stopped source, empty target)\nmonitor platform-check (connect selected backends; no messages)\nmonitor probe\nmonitor run\nmonitor status\nmonitor test-notification\nmonitor retry-failed\nmonitor confirm-start\nmonitor service install|start|stop|health|doctor|verify-recovery --side local|cloud\nmonitor switch local|cloud\nmonitor set-active local|cloud (initial setup only)")
+		fmt.Println("monitor check-config [--probe] [--official-auth]\nmonitor platform-import-sqlite SOURCE_ROOT (stopped source, empty target)\nmonitor platform-check (connect selected backends; no messages)\nmonitor healthcheck live|ready|business\nmonitor platform-migrate\nmonitor backup /absolute/new-file.sqlite\nmonitor restore /absolute/backup.sqlite (empty stopped target)\nmonitor probe\nmonitor run\nmonitor status\nmonitor test-notification\nmonitor retry-failed\nmonitor confirm-start\nmonitor service install|start|stop|health|doctor|verify-recovery --side local|cloud\nmonitor switch local|cloud\nmonitor set-active local|cloud (initial setup only)")
 		return nil
 	}
 	c, e := Load(o.Root)
@@ -105,6 +105,60 @@ func CLI(ctx context.Context, o Options) error {
 		return ""
 	}
 	switch cmd {
+	case "healthcheck":
+		s, err := ReadStatus(o.Root)
+		if err != nil {
+			return fmt.Errorf("status unavailable")
+		}
+		valid := false
+		switch arg() {
+		case "live":
+			valid = s.Live(time.Now())
+		case "ready":
+			valid = s.Ready(time.Now())
+		case "business":
+			valid = s.BusinessHealthy(time.Now())
+		default:
+			return fmt.Errorf("healthcheck live|ready|business")
+		}
+		if !valid {
+			return fmt.Errorf("worker %s unhealthy", arg())
+		}
+		return nil
+	case "platform-migrate":
+		if c.Platform.StorageMode() != "postgres" {
+			return fmt.Errorf("platform-migrate requires PostgreSQL")
+		}
+		if os.Getenv(c.Platform.Postgres.DSNEnv) == "" {
+			return fmt.Errorf("PostgreSQL DSN missing")
+		}
+		apply := true
+		c.Platform.Postgres.AutoMigrate = &apply
+		db, err := OpenPostgres(ctx, c)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		return Print(map[string]any{"schema_version": 1, "notification_sent": false})
+	case "backup":
+		if c.Platform.StorageMode() != "sqlite" {
+			return fmt.Errorf("use pg_dump for PostgreSQL backups")
+		}
+		if arg() == "" {
+			return fmt.Errorf("backup /absolute/new-file.sqlite")
+		}
+		if err := BackupSQLite(ctx, o.Root, arg()); err != nil {
+			return err
+		}
+		return Print(map[string]any{"backup": arg(), "notification_sent": false})
+	case "restore":
+		if c.Platform.StorageMode() != "sqlite" {
+			return fmt.Errorf("use pg_restore for PostgreSQL")
+		}
+		if arg() == "" {
+			return fmt.Errorf("restore /absolute/backup.sqlite (empty stopped target)")
+		}
+		return RestoreSQLite(ctx, o.Root, arg())
 	case "platform-import-sqlite":
 		if c.Platform.StorageMode() != "postgres" || len(o.Args) != 2 {
 			return fmt.Errorf("usage: platform-import-sqlite /absolute/stopped/source-root (PostgreSQL mode)")

@@ -21,6 +21,7 @@ platform:
   subscription_id: room-1616-main
   postgres:
     dsn_env: MONITOR_POSTGRES_DSN
+    auto_migrate: false
   redis:
     url_env: MONITOR_REDIS_URL
 ```
@@ -74,6 +75,7 @@ cd deploy/cloud
 # 设置 .env 中飞书变量、POSTGRES_PASSWORD、REDIS_PASSWORD，及匹配的两个连接 URL
 # 本机地址：PostgreSQL 127.0.0.1:5432；Redis 127.0.0.1:6379
 ./manage.sh platform check
+./manage.sh platform migrate
 ./manage.sh platform up
 ```
 
@@ -111,7 +113,7 @@ $DC exec monitor /app/monitor --root /app test-notification
 $DC exec -T postgres pg_dump -U monitor -d monitor > /安全目录/monitor-backup.sql
 ```
 
-首次为 PostgreSQL 建表使用 additive CREATE IF NOT EXISTS，在事务中串行化初始化；运行账号需建表权限。本示例不提供自动破坏性 schema 降级。回滚应用版本前检查 schema / 字段兼容性；切勿为回滚删除卷。多云主机使用共享托管 PostgreSQL/Redis 或私网服务，并独立配置同一订阅，各机不共享本地 var/。
+PostgreSQL 使用版本/校验和迁移账本；生产配置关闭启动自动迁移，先运行 platform-migrate。迁移账号需建表权限，运行账号需要业务读写权限。本示例不提供自动破坏性 schema 降级。回滚应用版本前检查 schema / 字段兼容性；切勿为回滚删除卷。多云主机使用共享托管 PostgreSQL/Redis 或私网服务，并独立配置同一订阅，各机不共享本地 var/。
 
 ## 5. SQLite 去重状态迁移
 
@@ -172,3 +174,5 @@ Repository / Cache / TaskQueue 为独立接口，Kafka 没有实现，配置 kaf
 ### 已验证的 Linux CI（2026-10-09）
 
 实现提交 `4066da24543ef039ea9f8db4516af91475949615` 的 [云平台集成运行](https://github.com/EthanShen10086/bilibili-live-monitor-trpc-go/actions/runs/37878794619) 已成功：原生 PostgreSQL / Redis 集成与竞态检查、Go vet、真实框架进程、真实 Nginx HTTPS / Basic Auth / GET 限制 / 不缓存状态、Compose 模型和云容器构建均通过；同提交原有 tests 工作流也成功。它补足了本机原生 PostgreSQL 和 Nginx 工具权限受限的验证；生产云主机 SSH、systemd/Docker 自启动恢复、实际飞书群/手机送达仍未执行。
+
+探针、指标、trace、迁移账本及恢复流程详见 [上线手册](PRODUCTION_READINESS.md)。

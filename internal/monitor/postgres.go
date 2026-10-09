@@ -46,10 +46,8 @@ func OpenPostgres(ctx context.Context, c Config) (*PostgresStore, error) {
 		return nil, fmt.Errorf("PostgreSQL connection failed")
 	}
 	defer tx.Rollback()
-	// Serialize additive migrations even when several replicas start together.
-	if _, err = tx.ExecContext(cc, "SELECT pg_advisory_xact_lock(16160019029)"); err == nil {
-		_, err = tx.ExecContext(cc, platformSchema)
-	}
+	apply := c.Platform.Postgres.AutoMigrate == nil || *c.Platform.Postgres.AutoMigrate
+	err = migratePlatform(cc, tx, apply)
 	if err == nil {
 		_, err = tx.ExecContext(cc, "INSERT INTO lm_scopes(scope,room,binding) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", s.Scope, c.Subscription.RoomID, subscriptionBinding(c))
 	}
@@ -66,7 +64,7 @@ func OpenPostgres(ctx context.Context, c Config) (*PostgresStore, error) {
 	}
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("PostgreSQL schema or subscription binding failed")
+		return nil, fmt.Errorf("PostgreSQL schema or subscription binding failed: %w", err)
 	}
 	return s, nil
 }
@@ -423,4 +421,12 @@ func subscriptionBinding(c Config) string {
 func (s *PostgresStore) lockScope(ctx context.Context, tx *sql.Tx) error {
 	var scope string
 	return tx.QueryRowContext(ctx, "SELECT scope FROM lm_scopes WHERE scope=$1 FOR UPDATE", s.Scope).Scan(&scope)
+}
+
+func (s *PostgresStore) OldestPending() (int64, error) {
+	cc, cancel := s.timeout()
+	defer cancel()
+	var oldest sql.NullInt64
+	err := s.DB.QueryRowContext(cc, "SELECT MIN((payload::jsonb->>'detectedAt')::bigint) FROM lm_jobs WHERE scope=$1 AND status='pending'", s.Scope).Scan(&oldest)
+	return oldest.Int64, err
 }
