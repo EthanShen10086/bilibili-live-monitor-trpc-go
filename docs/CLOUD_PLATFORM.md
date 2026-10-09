@@ -168,3 +168,7 @@ GitHub Actions cloud-platform.yml 使用原生 PostgreSQL + Redis、Go 竞态检
 ## 8. 后续扩展
 
 Repository / Cache / TaskQueue 为独立接口，Kafka 没有实现，配置 kafka 会明确拒绝；当前适配器为数据库队列与 Redis Streams。不同时部署 Kafka、RabbitMQ、Redis 三套队列。订阅管理 API、多租户鉴权、共享上游房间探测以及自动平台→SQLite 导出属于后续需求，当前不标记为已交付。
+
+### 已验证的 Linux CI（2026-10-09）
+
+实现提交 `4066da24543ef039ea9f8db4516af91475949615` 的 [云平台集成运行](https://github.com/EthanShen10086/bilibili-live-monitor-trpc-go/actions/runs/37878794619) 已成功：原生 PostgreSQL / Redis 集成与竞态检查、Go vet、真实框架进程、真实 Nginx HTTPS / Basic Auth / GET 限制 / 不缓存状态、Compose 模型和云容器构建均通过；同提交原有 tests 工作流也成功。它补足了本机原生 PostgreSQL 和 Nginx 工具权限受限的验证；生产云主机 SSH、systemd/Docker 自启动恢复、实际飞书群/手机送达仍未执行。

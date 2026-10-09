@@ -40,3 +40,7 @@ Node 各副本 48 项通过、1 项真实平台测试跳过；Go 34 项、tRPC-G
 ## 2026-10-09 可选云端平台
 
 平台增量的本机完整竞态测试 45 项通过（5 项数据库/Redis 集成用例使用 PGlite SQL/wire 与真实临时 Redis）；Go vet、Mac 构建通过，原轻量 tRPC 进程冒烟通过。Compose v2.39.4 实际校验 light / platform + workers + nginx 模型通过。原生 PostgreSQL 初始化被当前工具共享内存权限拒绝；Nginx 编译通过，实际 -t 被网络 sysctl 权限拒绝。已提供 GitHub Actions 原生 PostgreSQL/Redis、Nginx HTTPS、容器构建验收；CI 与真实云端结果需独立核对。未接触真实飞书凭证，未发送真实消息，未启动用户 Mac 的新服务。详见 CLOUD_PLATFORM.md。
+
+### 已验证的 Linux CI（2026-10-09）
+
+实现提交 `4066da24543ef039ea9f8db4516af91475949615` 的 [云平台集成运行](https://github.com/EthanShen10086/bilibili-live-monitor-trpc-go/actions/runs/37878794619) 已成功：原生 PostgreSQL / Redis 集成与竞态检查、Go vet、真实框架进程、真实 Nginx HTTPS / Basic Auth / GET 限制 / 不缓存状态、Compose 模型和云容器构建均通过；同提交原有 tests 工作流也成功。它补足了本机原生 PostgreSQL 和 Nginx 工具权限受限的验证；生产云主机 SSH、systemd/Docker 自启动恢复、实际飞书群/手机送达仍未执行。
