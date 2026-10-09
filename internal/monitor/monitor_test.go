@@ -295,6 +295,36 @@ func TestWorkerNoNetworkOutsideWindow(t *testing.T) {
 	}
 }
 
+// RunUntilStatus synchronizes on persisted behavior instead of a short startup budget.
+// Slow race-instrumented CI hosts may spend over a second initializing SQLite.
+func runUntilStatus(t *testing.T, root string, c Config, h *HTTP, reached func(Status) bool) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, root, c, h) }()
+	timer := time.NewTicker(20 * time.Millisecond)
+	defer timer.Stop()
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				return fmt.Errorf("worker stopped before expected persisted state")
+			}
+			return err
+		case <-ctx.Done():
+			<-done
+			return fmt.Errorf("expected worker state timed out")
+		case <-timer.C:
+			state, err := ReadStatus(root)
+			if err == nil && state.Running && reached(state) {
+				cancel()
+				return <-done
+			}
+		}
+	}
+}
+
 func TestWorkerDurableSendAndRestart(t *testing.T) {
 	c := testConfig(t)
 	c.Schedule.Weekdays = []int{1, 2, 3, 4, 5, 6, 7}
@@ -315,9 +345,7 @@ func TestWorkerDurableSendAndRestart(t *testing.T) {
 	})
 	root := t.TempDir()
 	for i := 0; i < 2; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
-		e := Run(ctx, root, c, h)
-		cancel()
+		e := runUntilStatus(t, root, c, h, func(s Status) bool { return s.PollingPhase == "notified_live" && s.LastObservation > 0 })
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -388,9 +416,7 @@ func TestMinuteWorkerSchedulesWithoutRepeatedQueries(t *testing.T) {
 		return response(`{"code":0,"data":{"room_id":11163068,"short_id":1616,"live_status":0,"title":"minute test","live_time":""}}`, 200), nil
 	})
 	root := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
-	defer cancel()
-	if e := Run(ctx, root, c, h); e != nil {
+	if e := runUntilStatus(t, root, c, h, func(s Status) bool { return s.LastObservation > 0 && s.NextPoll-s.LastObservation >= 60000 }); e != nil {
 		t.Fatal(e)
 	}
 	if queries.Load() != 1 {
@@ -415,10 +441,8 @@ func TestWorkerSendFailureKeepsFastPolling(t *testing.T) {
 		}
 		return response("retry", 503), nil
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
 	root := t.TempDir()
-	if e := Run(ctx, root, c, h); e != nil {
+	if e := runUntilStatus(t, root, c, h, func(s Status) bool { return s.NotificationError != "" && !s.Sending }); e != nil {
 		t.Fatal(e)
 	}
 	s, e := ReadStatus(root)
