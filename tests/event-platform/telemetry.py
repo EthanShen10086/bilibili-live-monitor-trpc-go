@@ -49,11 +49,7 @@ assert propagated, 'Detector -> Kafka consumer -> durable task -> sender trace c
 
 # An explicit disposable test alert exercises Prometheus-independent Alertmanager delivery.
 code = '''import json
-import http.cookiejar
-from html.parser import HTMLParser
-import ssl
-from urllib.error import HTTPError
-from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, ProxyHandler, Request,time,urllib.request
+import urllib.request
 payload=[{"labels":{"alertname":"IntegrationDeliveryProof","severity":"test"},"annotations":{"summary":"disposable acceptance"}}]
 r=urllib.request.Request("http://alertmanager:9093/api/v2/alerts",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"},method="POST")
 with urllib.request.urlopen(r,timeout=10) as response: response.read()

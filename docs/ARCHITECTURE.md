@@ -1,5 +1,46 @@
 # 架构、依赖与行为
 
+## 可选事件平台
+
+`cmd/monitor` 保留轻量模式；`cmd/event-platform` 是显式启用的平台入口，
+不会因为已有 PostgreSQL/Redis 配置自动切换。平台各进程共用一个 Go 模块，
+按 `api/detector/relay/router/sender/analytics` 独立部署。
+
+```mermaid
+flowchart LR
+    Client[管理 API 客户端] --> Gateway[APISIX 或 Nginx]
+    Gateway --> API[tRPC 管理 API]
+    API --> Control[租户与订阅仓储]
+    Detector[共享房间检测] --> Events[状态 + 不可变事件 + Outbox]
+    Events --> Relay[发布进程]
+    Relay --> Kafka[Kafka 按房间分区]
+    Kafka --> Router[通知消费组]
+    Router --> Tasks[持久化通知任务]
+    Tasks --> Sender[飞书与 SMTP 适配器]
+    Kafka --> Analytics[统计消费组]
+    Analytics --> Projection[统计与历史回放投影]
+```
+
+控制模块拥有租户、成员、加密通知对象、订阅和审计；事件模块拥有房间租约、
+状态、事件、Outbox；通知模块拥有任务和发送租约；统计模块拥有投影与回放。
+API 依赖消费方仓储接口，身份验证与租户授权独立执行。数据库事务保证事件和
+状态一起提交；Kafka 发布确认后才标记 published，消费效果持久化后才提交位点。
+重复发布、重平衡和发送进程崩溃由事件去重、任务唯一键和租约恢复处理。
+外部通知接受后、写入数据库前发生故障仍可能重复，因此不承诺绝对一次送达。
+
+Kafka 不经过网关。网关/API 停机不停止既有检测和发送；Kafka 停机将新事件
+积压在 Outbox，恢复后继续路由。回放只重建投影，不能调用发送适配器。
+结构化日志、OTel trace context 和持久化任务 trace 字段关联跨进程处理。
+监控系统故障不得成为业务事务的提交依赖。
+
+当前是一个仓库中的模块化平台。先用实际容量与故障数据确定拆分需求，
+独立进程已经允许分别扩容。若后续拆仓库，需先建立版本化 API/事件契约、
+模块独立迁移、独立凭证和数据库权限，再移走模块；不能把共享数据库写入
+当作微服务调用。部署与容量边界见 [事件平台部署包](../deploy/event-platform/README.md)，
+旧状态导入见 [迁移说明](event-platform/MIGRATION.md)。
+
+## 轻量模式
+
 配置 → 时间窗口 → 轮询或官方事件 → 统一 Observation → Repository（SQLite/PostgreSQL）去重/持久化队列 → 飞书群或应用私聊。
 
 ## 检测

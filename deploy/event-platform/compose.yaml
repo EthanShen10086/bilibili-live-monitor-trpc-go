@@ -116,8 +116,10 @@ services:
       retries: 20
   kafka-init:
     image: apache/kafka:4.1.1
-    entrypoint: /opt/kafka/bin/kafka-topics.sh
-    command: [--bootstrap-server, 'kafka:9092', --create, --if-not-exists, --topic, live.events.v1, --partitions, '12', --replication-factor, '1', --config, 'retention.ms=${KAFKA_RETENTION_MS:-604800000}']
+    entrypoint: [sh, /etc/live/kafka-init.sh]
+    environment:
+      KAFKA_RETENTION_MS: ${KAFKA_RETENTION_MS:-604800000}
+    volumes: [./kafka-init.sh:/etc/live/kafka-init.sh:ro]
     networks: [backend]
     depends_on:
       kafka: {condition: service_healthy}
