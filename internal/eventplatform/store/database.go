@@ -21,6 +21,11 @@ import (
 //go:embed schema.sql
 var schema string
 
+//go:embed schema_v2.sql
+var schemaV2 string
+
+var migrations = []string{schema, schemaV2}
+
 type DB struct {
 	SQL   *sql.DB
 	Vault *secrets.Vault
@@ -77,32 +82,49 @@ func (d *DB) Migrate(ctx context.Context) error {
 		if _, e := tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS ep_migrations(version integer PRIMARY KEY,checksum text NOT NULL)"); e != nil {
 			return e
 		}
-		checksum := fmt.Sprintf("%x", sha256.Sum256([]byte(schema)))
-		var version int
-		var sum string
-		e := tx.QueryRowContext(ctx, "SELECT version,checksum FROM ep_migrations ORDER BY version DESC LIMIT 1").Scan(&version, &sum)
-		if e == nil {
-			if version != 1 || sum != checksum {
-				return errors.New("unsupported or changed event platform migration")
+		var maxVersion int
+		if e := tx.QueryRowContext(ctx, "SELECT COALESCE(max(version),0) FROM ep_migrations").Scan(&maxVersion); e != nil {
+			return e
+		}
+		if maxVersion > len(migrations) {
+			return errors.New("unsupported event platform schema")
+		}
+		for i, sqlText := range migrations {
+			version := i + 1
+			checksum := fmt.Sprintf("%x", sha256.Sum256([]byte(sqlText)))
+			var sum string
+			err := tx.QueryRowContext(ctx, "SELECT checksum FROM ep_migrations WHERE version=$1", version).Scan(&sum)
+			if err == nil {
+				if sum != checksum {
+					return errors.New("changed applied event platform migration")
+				}
+				continue
 			}
-			return nil
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, sqlText); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, "INSERT INTO ep_migrations VALUES($1,$2)", version, checksum); err != nil {
+				return err
+			}
 		}
-		if !errors.Is(e, sql.ErrNoRows) {
-			return e
-		}
-		if _, e = tx.ExecContext(ctx, schema); e != nil {
-			return e
-		}
-		_, e = tx.ExecContext(ctx, "INSERT INTO ep_migrations VALUES(1,$1)", checksum)
-		return e
+		return nil
 	})
 }
 
 func (d *DB) CheckSchema(ctx context.Context) error {
-	var sum string
-	e := d.SQL.QueryRowContext(ctx, "SELECT checksum FROM ep_migrations WHERE version=1").Scan(&sum)
-	if e != nil || sum != fmt.Sprintf("%x", sha256.Sum256([]byte(schema))) {
+	var count int
+	if e := d.SQL.QueryRowContext(ctx, "SELECT count(*) FROM ep_migrations").Scan(&count); e != nil || count != len(migrations) {
 		return errors.New("run event-platform migrate first")
+	}
+	for i, sqlText := range migrations {
+		var sum string
+		e := d.SQL.QueryRowContext(ctx, "SELECT checksum FROM ep_migrations WHERE version=$1", i+1).Scan(&sum)
+		if e != nil || sum != fmt.Sprintf("%x", sha256.Sum256([]byte(sqlText))) {
+			return errors.New("run event-platform migrate first")
+		}
 	}
 	return nil
 }

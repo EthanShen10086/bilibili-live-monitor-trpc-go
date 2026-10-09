@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"go.opentelemetry.io/otel/propagation"
+
 	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/eventplatform/domain"
 	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
@@ -47,9 +49,11 @@ func (n Notifications) Route(ctx context.Context, event domain.Event, subs []dom
 			if !expires.After(time.Now()) {
 				continue
 			}
+			carrier := propagation.MapCarrier{}
+			propagation.TraceContext{}.Inject(ctx, carrier)
 			text := monitor.FormatNotice(monitor.Notice{Observation: event.Data.Observation, Key: event.Data.SessionKey, Catchup: event.Data.Catchup}, s.RoomID)
 			for _, target := range s.TargetIDs {
-				_, err := tx.ExecContext(ctx, "INSERT INTO ep_jobs(id,tenant_id,subscription_id,target_id,event_id,state,text,next,expires) SELECT $1,$2,$3,$4,$5,'pending',$6,clock_timestamp(),$7 WHERE EXISTS(SELECT 1 FROM ep_subscription_targets st JOIN ep_subscriptions sub ON sub.tenant_id=st.tenant_id AND sub.id=st.id WHERE st.tenant_id=$2 AND st.id=$3 AND st.target_id=$4 AND sub.enabled) ON CONFLICT DO NOTHING", monitor.ID(), s.TenantID, s.ID, target, event.ID, text, expires)
+				_, err := tx.ExecContext(ctx, "INSERT INTO ep_jobs(id,tenant_id,subscription_id,target_id,event_id,state,text,next,expires,traceparent,tracestate) SELECT $1,$2,$3,$4,$5,'pending',$6,clock_timestamp(),$7,$8,$9 WHERE EXISTS(SELECT 1 FROM ep_subscription_targets st JOIN ep_subscriptions sub ON sub.tenant_id=st.tenant_id AND sub.id=st.id WHERE st.tenant_id=$2 AND st.id=$3 AND st.target_id=$4 AND sub.enabled) ON CONFLICT DO NOTHING", monitor.ID(), s.TenantID, s.ID, target, event.ID, text, expires, carrier.Get("traceparent"), carrier.Get("tracestate"))
 				if err != nil {
 					return err
 				}
@@ -65,7 +69,7 @@ func (n Notifications) Claim(ctx context.Context, owner string) (*domain.Job, er
 		if _, e := tx.ExecContext(ctx, "UPDATE ep_jobs SET state='expired',owner='' WHERE state IN ('pending','sending') AND expires<=clock_timestamp() AND (lease_until IS NULL OR lease_until<clock_timestamp())"); e != nil {
 			return e
 		}
-		e := tx.QueryRowContext(ctx, "SELECT j.id,j.tenant_id,j.subscription_id,j.target_id,j.event_id,j.text,j.attempts,j.expires,j.next FROM ep_jobs j JOIN ep_subscriptions s ON s.tenant_id=j.tenant_id AND s.id=j.subscription_id JOIN ep_subscription_targets st ON st.tenant_id=j.tenant_id AND st.id=j.subscription_id AND st.target_id=j.target_id WHERE s.enabled AND j.expires>clock_timestamp() AND ((j.state='pending' AND j.next<=clock_timestamp()) OR (j.state='sending' AND j.lease_until<clock_timestamp())) ORDER BY j.next FOR UPDATE OF j SKIP LOCKED LIMIT 1").Scan(&job.ID, &job.TenantID, &job.SubscriptionID, &job.TargetID, &job.EventID, &job.Text, &job.Attempts, &job.Expires, &job.Next)
+		e := tx.QueryRowContext(ctx, "SELECT j.id,j.tenant_id,j.subscription_id,j.target_id,j.event_id,j.text,j.attempts,j.expires,j.next,j.traceparent,j.tracestate FROM ep_jobs j JOIN ep_subscriptions s ON s.tenant_id=j.tenant_id AND s.id=j.subscription_id JOIN ep_subscription_targets st ON st.tenant_id=j.tenant_id AND st.id=j.subscription_id AND st.target_id=j.target_id WHERE s.enabled AND j.expires>clock_timestamp() AND ((j.state='pending' AND j.next<=clock_timestamp()) OR (j.state='sending' AND j.lease_until<clock_timestamp())) ORDER BY j.next FOR UPDATE OF j SKIP LOCKED LIMIT 1").Scan(&job.ID, &job.TenantID, &job.SubscriptionID, &job.TargetID, &job.EventID, &job.Text, &job.Attempts, &job.Expires, &job.Next, &job.TraceParent, &job.TraceState)
 		if errors.Is(e, sql.ErrNoRows) {
 			return nil
 		}

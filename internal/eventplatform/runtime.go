@@ -65,7 +65,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 		handler := &api.Server{Control: control, Notifications: notifications, Projections: projections, Verify: verify, RetentionDays: c.RetentionDays, Metrics: telemetry.Handler()}
 		return serve(ctx, configPath, handler.Handler())
 	}
-	return runWorker(ctx, configPath, db, telemetry, events, notifications, func(ctx context.Context) error {
+	return runWorker(ctx, configPath, db, telemetry, events, notifications, c.RetentionDays, func(ctx context.Context) error {
 		if role == "detector" {
 			return tick(ctx, time.Second, func(ctx context.Context) error {
 				rooms, e := events.DueRooms(ctx)
@@ -90,7 +90,10 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 				if e != nil || job == nil {
 					return e
 				}
-				deliveryCtx, end := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+				parent := propagation.TraceContext{}.Extract(context.WithoutCancel(ctx), propagation.MapCarrier{"traceparent": job.TraceParent, "tracestate": job.TraceState})
+				deliveryCtx, span := otel.Tracer("event-platform").Start(parent, "sender.deliver")
+				defer span.End()
+				deliveryCtx, end := context.WithTimeout(deliveryCtx, 30*time.Second)
 				defer end()
 				target, e := control.ResolveTarget(deliveryCtx, job.TenantID, job.TargetID)
 				if e == nil {
@@ -98,7 +101,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 				}
 				finishCtx, end := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 				defer end()
-				slog.InfoContext(deliveryCtx, "notification_attempt", "task_id", job.ID, "event_id", job.EventID, "result", typeName(e))
+				slog.InfoContext(deliveryCtx, "notification_attempt", "task_id", job.ID, "event_id", job.EventID, "result", typeName(e), "trace_id", span.SpanContext().TraceID().String(), "span_id", span.SpanContext().SpanID().String())
 				return notifications.Finish(finishCtx, *job, e)
 			})
 		}
@@ -168,7 +171,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 	})
 }
 
-func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observability.Telemetry, events store.Events, jobs store.Notifications, worker func(context.Context) error) error {
+func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observability.Telemetry, events store.Events, jobs store.Notifications, retention int, worker func(context.Context) error) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var progress atomic.Int64
@@ -208,7 +211,7 @@ func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observ
 			}
 			progress.Store(time.Now().Unix())
 			heartbeat.Set(float64(progress.Load()))
-			return nil
+			return events.Cleanup(ctx, retention)
 		})
 	}()
 	e := <-done

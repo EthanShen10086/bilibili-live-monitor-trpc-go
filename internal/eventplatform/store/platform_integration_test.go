@@ -205,3 +205,78 @@ func TestRoomFencingOutboxDuplicateRoutingAndReplay(t *testing.T) {
 		t.Fatal(fmt.Sprint(stats), e)
 	}
 }
+
+func TestImportAtomicDisabledAndIdempotent(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	policy := domain.DefaultPolicy()
+	now := time.Now()
+	notice := monitor.Notice{Observation: monitor.Observation{RoomID: 1616, Live: true, Start: "2026-10-09T00:00:00.000Z", At: now.UnixMilli()}, Key: "legacy-session", Catchup: true}
+	input := LegacySnapshot{SourceID: "snapshot-1", Owner: "legacy-owner", Subscription: domain.Subscription{RoomID: 1616, Policy: policy, TargetIDs: []string{"legacy-target"}}, Target: domain.Target{Name: "legacy", Kind: "smtp", Credentials: domain.Credentials{SMTPHost: "localhost", SMTPPort: 2525, From: "a@example.com", Recipient: "b@example.com"}}, Observation: notice.Observation, SessionKey: notice.Key, Jobs: []LegacyJob{{Notice: notice, State: "sent", Next: now, Expires: now.Add(time.Minute)}}}
+	report, e := db.ImportLegacy(ctx, input)
+	if e != nil || report.AlreadyImported {
+		t.Fatalf("import %v %v", report, e)
+	}
+	report, e = db.ImportLegacy(ctx, input)
+	if e != nil || !report.AlreadyImported {
+		t.Fatalf("repeat %v %v", report, e)
+	}
+	var enabled bool
+	var session, state string
+	if e = db.SQL.QueryRow("SELECT enabled FROM ep_subscriptions").Scan(&enabled); e != nil || enabled {
+		t.Fatal("import enabled sending", e)
+	}
+	if e = db.SQL.QueryRow("SELECT session_key FROM ep_rooms").Scan(&session); e != nil || session != notice.Key {
+		t.Fatal("lost dedup session", e)
+	}
+	if e = db.SQL.QueryRow("SELECT state FROM ep_jobs").Scan(&state); e != nil || state != "sent" {
+		t.Fatal("lost sent state", e)
+	}
+	if n, e := (Events{db}).OutboxCount(ctx); e != nil || n != 0 {
+		t.Fatal("import queued broker publication", e)
+	}
+	if job, e := (Notifications{db}).Claim(ctx, "sender"); e != nil || job != nil {
+		t.Fatal("import sends notification", e)
+	}
+	input.SourceID = "changed-snapshot"
+	if _, e = db.ImportLegacy(ctx, input); !errors.Is(e, domain.ErrConflict) {
+		t.Fatal("replaced existing snapshot", e)
+	}
+}
+
+func TestRetentionPreservesActiveSessionAndUnpublished(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	_, _, _, sub := fixture(t, db)
+	events := Events{db}
+	now := time.Now().Add(-100 * 24 * time.Hour)
+	acquired, e := events.Acquire(ctx, sub.RoomID, "detector")
+	if e != nil || !acquired {
+		t.Fatal(e)
+	}
+	if e = events.Observe(ctx, sub.RoomID, "detector", monitor.Observation{RoomID: sub.RoomID, Live: true, Start: "old-session", At: now.UnixMilli()}, false, time.Minute); e != nil {
+		t.Fatal(e)
+	}
+	if e = events.PublishBatch(ctx, func(context.Context, domain.Event) error { return nil }); e != nil {
+		t.Fatal(e)
+	}
+	if e = events.Cleanup(ctx, 90); e != nil {
+		t.Fatal(e)
+	}
+	var count int
+	if e = db.SQL.QueryRow("SELECT count(*) FROM ep_events").Scan(&count); e != nil || count != 1 {
+		t.Fatal("active session was pruned", e)
+	}
+	if _, e = db.SQL.Exec("UPDATE ep_rooms SET observation='{}'"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = db.SQL.Exec("UPDATE ep_events SET published=false"); e != nil {
+		t.Fatal(e)
+	}
+	if e = events.Cleanup(ctx, 90); e != nil {
+		t.Fatal(e)
+	}
+	if count, e := events.OutboxCount(ctx); e != nil || count != 1 {
+		t.Fatal("unpublished event was pruned", e)
+	}
+}

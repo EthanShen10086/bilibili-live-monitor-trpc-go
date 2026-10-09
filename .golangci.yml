@@ -2,7 +2,7 @@ version: "2"
 run:
   timeout: 5m
   tests: true
-  build-tags: [integration]
+  build-tags: [integration, eventintegration]
 linters:
   default: none
   enable:

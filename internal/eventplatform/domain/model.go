@@ -214,6 +214,8 @@ func (e Event) Validate() error {
 }
 
 type Job struct {
+	TraceParent    string    `json:"-"`
+	TraceState     string    `json:"-"`
 	ID             string    `json:"id"`
 	TenantID       string    `json:"tenant_id"`
 	SubscriptionID string    `json:"subscription_id"`
