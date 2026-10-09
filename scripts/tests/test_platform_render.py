@@ -30,4 +30,6 @@ class PlatformRenderTests(unittest.TestCase):
             config = json.loads(raw.removesuffix('#END\n'))
             self.assertEqual(config['routes'][0]['plugins']['forward-auth']['request_headers'], ['Authorization'])
             self.assertEqual(config['routes'][0]['upstream']['retries'], 0)
+            self.assertFalse(config['routes'][0]['plugins']['forward-auth']['allow_degradation'])
+            self.assertEqual(config['routes'][0]['plugins']['forward-auth']['status_on_error'], 503)
             self.assertTrue(raw.endswith('#END\n'))

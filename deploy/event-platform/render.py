@@ -28,7 +28,8 @@ def main():
                 'timeout': {'connect': 3, 'send': 12, 'read': 12}}
     api_plugins = {
         'forward-auth': {'uri': policy['auth_endpoint'], 'request_method': 'GET',
-                         'request_headers': ['Authorization'], 'timeout': 3000},
+                         'request_headers': ['Authorization'], 'timeout': 3000,
+                         'allow_degradation': False, 'status_on_error': 503},
         'limit-req': {'rate': policy['requests_per_second'], 'burst': policy['burst'],
                       'key': 'remote_addr', 'rejected_code': 429, 'nodelay': True},
         'request-id': {'header_name': 'X-Gateway-Request-ID', 'include_in_response': True},
