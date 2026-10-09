@@ -3,6 +3,11 @@
 This is an opt-in **single-host learning deployment**, not a production HA topology.
 The existing monitor CLI, SQLite and `deploy/cloud` profiles remain independent.
 Never start both senders for a subscription during migration.
+The APISIX plus observability profile has 6,272MiB (about 6.1GiB) of combined steady
+container memory limits, plus migration/topic-initialization and host/build overhead.
+These limits are budgets, not measured consumption. Size the host from that budget
+and measure actual RSS, disk growth and latency before assigning production capacity.
+The lightweight profile's small-server sizing does not apply to this full stack.
 
 1. Copy `.env.example` to `.env`; provide random database/bootstrap/OAuth secrets and a
    JSON map of base64-encoded 32-byte AES keys. Keep previous key IDs during rotation.
