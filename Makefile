@@ -1,4 +1,4 @@
-.PHONY: tools fmt fmt-check lint test test-integration verify hooks build smoke quality-test
+.PHONY: tools fmt fmt-check lint test test-integration verify hooks build smoke quality-test benchmark
 
 tools:
 	python3 scripts/quality.py tools
@@ -22,3 +22,5 @@ smoke: build
 	python3 scripts/smoke.py
 quality-test:
 	python3 -m unittest discover -s scripts/tests -v
+benchmark:
+	go test ./internal/monitor -run '^$$' -bench BenchmarkSQLite -benchmem -benchtime=1s -count=3
