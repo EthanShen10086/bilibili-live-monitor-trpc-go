@@ -56,10 +56,18 @@ jobs:
           sed -e 's/19028/19030/' -e 's/19029/19031/' ../../trpc_go.yaml > trpc.sender.yaml
           cp config.platform.yaml config.yaml
           docker compose --profile platform --profile workers --profile nginx -f compose.yaml -f platform.compose.yaml config --quiet
+          cp config.postgres.yaml config.yaml
+          sed 's/role: both/role: sender/' config.postgres.yaml > config.sender.yaml
+          docker compose --profile postgres --profile workers --profile nginx -f compose.yaml -f postgres.compose.yaml config --format json > /tmp/monitor-postgres-compose.json
+          python3 -c 'import json; s=json.load(open("/tmp/monitor-postgres-compose.json"))["services"]; assert "postgres" in s and "redis" not in s and "kafka" not in s; assert "redis" not in s["monitor"].get("depends_on",{}); assert "redis" not in s["sender"].get("depends_on",{})'
       - name: Cloud container build
         run: docker build -f deploy/cloud/Dockerfile -t live-monitor-test .
       - name: Actual non-root container process and health probes
         run: python3 scripts/smoke-container.py
+      - name: Actual PostgreSQL-only container without Redis
+        env:
+          MONITOR_TEST_POSTGRES: postgres://monitor:test-only-password@127.0.0.1:5432/monitor?sslmode=disable
+        run: python3 scripts/smoke-container.py postgres
       - name: Prometheus scrape and alert configuration validation
         run: >-
           docker run --rm --entrypoint /bin/promtool

@@ -38,9 +38,8 @@ services:
       - sender-state:/app/var
     depends_on:
       postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
   postgres:
-    profiles: [platform]
+    profiles: [postgres, platform]
     image: postgres:17.11-alpine
     restart: unless-stopped
     environment:

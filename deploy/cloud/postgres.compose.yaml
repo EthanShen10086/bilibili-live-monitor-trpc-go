@@ -1,0 +1,5 @@
+# Merge after compose.yaml for PostgreSQL without Redis/Kafka.
+services:
+  monitor:
+    depends_on:
+      postgres: {condition: service_healthy}
