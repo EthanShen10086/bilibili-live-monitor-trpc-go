@@ -57,3 +57,5 @@ Go 执行 `go test -race ./...`、`go vet ./...`，按原部署手册构建后�
 云端沿用 CLOUD.md 的停止、更新构建和 systemd 重启步骤，保留凭证与原 SQLite 文件；状态中核验 resource_safety_version: 1 和实际配置。没有真实服务器资源消耗或 SSH 切换的新证明。
 
 资源保护降低可控开销和异常风险，不能保证硬件寿命零影响。Mac 休眠期间无法实时检测；要全天候保障监测，可由云端承担。
+
+数据层与 Nginx 的选型及新增索引参见 [数据与代理说明](DATA_AND_PROXY.md)。

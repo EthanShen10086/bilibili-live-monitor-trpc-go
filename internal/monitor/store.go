@@ -38,7 +38,9 @@ func OpenStore(file string) (*Store, error) {
 	_, e = db.Exec(`PRAGMA journal_mode=DELETE; PRAGMA busy_timeout=5000;
 CREATE TABLE IF NOT EXISTS observations(room INTEGER PRIMARY KEY,live INTEGER NOT NULL,start TEXT,key TEXT);
 CREATE TABLE IF NOT EXISTS maintenance(id INTEGER PRIMARY KEY,last_cleanup INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS jobs(key TEXT PRIMARY KEY,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next INTEGER NOT NULL,expires INTEGER NOT NULL,last_error TEXT);`)
+CREATE TABLE IF NOT EXISTS jobs(key TEXT PRIMARY KEY,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',attempts INTEGER NOT NULL DEFAULT 0,next INTEGER NOT NULL,expires INTEGER NOT NULL,last_error TEXT);
+    CREATE INDEX IF NOT EXISTS jobs_pending_next ON jobs(next) WHERE status='pending';
+    CREATE INDEX IF NOT EXISTS jobs_pending_expires ON jobs(expires) WHERE status='pending';`)
 	if e != nil {
 		db.Close()
 		return nil, e
