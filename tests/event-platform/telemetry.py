@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Prove actual log retrieval, stored traces, panel provisioning and alert reception."""
 import json
+import http.cookiejar
+from html.parser import HTMLParser
+import ssl
+from urllib.error import HTTPError
+from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, ProxyHandler, Request
 from pathlib import Path
 import subprocess
 import time
@@ -43,7 +48,12 @@ for item in chain:
 assert propagated, 'Detector -> Kafka consumer -> durable task -> sender trace chain absent'
 
 # An explicit disposable test alert exercises Prometheus-independent Alertmanager delivery.
-code = '''import json,time,urllib.request
+code = '''import json
+import http.cookiejar
+from html.parser import HTMLParser
+import ssl
+from urllib.error import HTTPError
+from urllib.request import build_opener, HTTPCookieProcessor, HTTPSHandler, ProxyHandler, Request,time,urllib.request
 payload=[{"labels":{"alertname":"IntegrationDeliveryProof","severity":"test"},"annotations":{"summary":"disposable acceptance"}}]
 r=urllib.request.Request("http://alertmanager:9093/api/v2/alerts",data=json.dumps(payload).encode(),headers={"Content-Type":"application/json"},method="POST")
 with urllib.request.urlopen(r,timeout=10) as response: response.read()
@@ -55,7 +65,38 @@ def delivered():
     alerts = json.loads(result.stdout)['alerts']
     return any(a['labels']['alertname'] == 'IntegrationDeliveryProof' for group in alerts for a in group.get('alerts', []))
 wait(delivered, 'Alertmanager webhook receipt')
-# Verify that the provisioned dashboard is loaded in Grafana's database, not just a file.
-result = subprocess.run(compose + ['exec', '-T', 'grafana', 'sh', '-c', 'test -s /var/lib/grafana/grafana.db'], cwd=deploy)
-assert result.returncode == 0
-print('Actual Loki search, Tempo trace chain, Prometheus scrape and Alertmanager receiver receipt verified')
+# Log in through actual Grafana -> Keycloak -> callback using two distinct cookie jars.
+class LoginForm(HTMLParser):
+    action = None
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == 'form' and values.get('id') == 'kc-form-login':
+            self.action = values.get('action')
+
+users = json.loads((deploy / 'generated/ci-login-users.json').read_text())
+context = ssl.create_default_context(cafile=str(deploy / 'generated/certs/ca.crt'))
+for username, password in users.items():
+    session = build_opener(ProxyHandler({}), HTTPSHandler(context=context), HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    with session.open('https://grafana.localhost/login/generic_oauth', timeout=15) as response:
+        form = LoginForm()
+        form.feed(response.read().decode())
+    assert form.action, 'Keycloak login form missing'
+    data = urlencode({'username': username, 'password': password, 'credentialId': ''}).encode()
+    try:
+        with session.open(Request(form.action, data=data), timeout=15) as response:
+            response.read()
+    except HTTPError as error:
+        error.read()
+    try:
+        with session.open('https://grafana.localhost/api/user', timeout=15) as response:
+            authorized = response.status == 200
+            response.read()
+    except HTTPError as error:
+        error.read()
+        authorized = False
+    assert authorized == (username == 'ci-operations'), 'Grafana operations-group isolation failed'
+    if authorized:
+        with session.open('https://grafana.localhost/api/dashboards/uid/live-platform', timeout=15) as response:
+            dashboard = json.loads(response.read())
+        assert dashboard['dashboard']['uid'] == 'live-platform' and len(dashboard['dashboard']['panels']) >= 5
+print('Actual Loki search, cross-process trace chain, Prometheus scrape, alert receipt and operations-only Grafana dashboard verified')

@@ -209,3 +209,11 @@ func (e Events) DueRooms(ctx context.Context) ([]int64, error) {
 	}
 	return out, rows.Err()
 }
+
+// Routed gates late-subscriber reconciliation on actual broker publication/consumption.
+// Snapshots cannot silently bypass the event transport during a broker outage.
+func (e Events) Routed(ctx context.Context, id string) (bool, error) {
+	var routed bool
+	err := e.DB.SQL.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM ep_events ev JOIN ep_consumed c ON c.event_id=ev.id AND c.consumer='notifications' WHERE ev.id=$1 AND ev.published)`, id).Scan(&routed)
+	return routed, err
+}

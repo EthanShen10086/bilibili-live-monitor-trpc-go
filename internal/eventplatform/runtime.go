@@ -137,6 +137,13 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 					return e
 				}
 				for _, event := range snapshots {
+					routed, err := events.Routed(ctx, event.ID)
+					if err != nil {
+						return err
+					}
+					if !routed {
+						continue
+					}
 					if time.Since(event.Time) > 2*time.Hour {
 						continue
 					}

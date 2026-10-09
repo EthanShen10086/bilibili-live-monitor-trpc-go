@@ -17,6 +17,10 @@ deploy = root / 'deploy/event-platform'
 context = ssl.create_default_context(cafile=str(deploy / 'generated/certs/ca.crt'))
 opener = build_opener(ProxyHandler({}), HTTPSHandler(context=context))
 gateway = sys.argv[1]
+compose = ['docker', 'compose', '-f', 'compose.yaml', '-f', '../../tests/event-platform/compose.yaml']
+def service(*args):
+    return subprocess.run(compose + list(args), cwd=deploy, check=True, capture_output=True, text=True).stdout
+
 clients = json.loads((deploy / 'generated/ci-clients.json').read_text())
 def request(path, method='GET', body=None, token=None, host='api.localhost', headers=None, form=False, pace=True):
     if pace:
@@ -78,6 +82,7 @@ assert request(base + '/members', token=viewer)[0] == 200
 assert request(base + '/targets', 'POST', {'name': 'forbidden'}, viewer)[0] in (400, 403)
 
 # Independent channels share one detected room. One temporary Feishu failure cannot suppress SMTP.
+service('stop', '--timeout', '10', 'kafka')
 request('https://127.0.0.1:19443/test/state', 'POST', {'live': 1, 'start': int(time.time()), 'fail_group': 1})
 targets = []
 for kind, credentials in (
@@ -102,6 +107,9 @@ assert request(base + '/subscriptions/' + sub['id'], 'PUT', {**update, 'version'
 def jobs_done():
     status, jobs = request(base + '/notifications', token=admin)
     return jobs if status == 200 and len(jobs) == 4 and all(job['state'] == 'sent' for job in jobs) else None
+wait(lambda: int(service('exec','-T','postgres','psql','-U','platform','-d','platform','-Atc',f'SELECT count(*) FROM ep_events WHERE room={room} AND NOT published').strip()) > 0, 'durable Outbox during actual broker outage', 90)
+assert request(base + '/notifications', token=admin)[1] == [], 'snapshot bypassed Kafka outage'
+service('start','kafka')
 jobs = wait(jobs_done, 'Kafka to four independent durable notifications', 240)
 assert len({(j['event_id'], j['subscription_id'], j['target_id']) for j in jobs}) == 4
 assert len({j['event_id'] for j in jobs}) == 1
@@ -125,6 +133,14 @@ with ThreadPoolExecutor(max_workers=30) as pool:
     statuses = list(pool.map(lambda _: request('/api/v1/tenants', token=admin, pace=False)[0], range(80)))
 assert 429 in statuses, 'gateway rate limit absent'
 time.sleep(4)
+
+# Management authentication failure must reject access while detection remains alive.
+probes = request('https://127.0.0.1:19443/test/state')[1]['probes']
+service('stop','--timeout','15','api')
+assert request('/api/v1/tenants', token=admin)[0] in (500, 502, 503, 504)
+wait(lambda: request('https://127.0.0.1:19443/test/state')[1]['probes'] > probes, 'detector progress during management API outage', 75)
+service('start','api')
+wait(lambda: request('/api/v1/tenants', token=admin)[0] == 200, 'API recovery')
 
 # Stop subscriptions before switching gateways; keep recorded history readable.
 for subscription in (sub, sub2):

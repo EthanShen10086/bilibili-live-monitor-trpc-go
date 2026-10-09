@@ -38,6 +38,16 @@ for i, name in enumerate(('integration', 'outsider', 'viewer'), 1):
                                                  'config': {'included.client.audience': 'live-api', 'access.token.claim': 'true'}}]})
     realm.setdefault('users', []).append({'id': f'00000000-0000-4000-8000-{i:012d}', 'username': f'service-account-{name}',
                                           'enabled': True, 'serviceAccountClientId': name})
+login_users = {}
+for i, username in enumerate(('ci-operations', 'ci-non-operations'), 4):
+    password = secrets.token_hex(16)
+    login_users[username] = password
+    realm.setdefault('users', []).append({'id': f'00000000-0000-4000-8000-{i:012d}', 'username': username,
+        'enabled': True, 'email': username + '@example.test', 'emailVerified': True,
+        'firstName': 'Integration', 'lastName': 'Operator', 'groups': ['operations'] if i == 4 else [],
+        'credentials': [{'type': 'password', 'value': password, 'temporary': False}]})
+(generated / 'ci-login-users.json').write_text(json.dumps(login_users))
+(generated / 'ci-login-users.json').chmod(0o600)
 (generated / 'realm.json').write_text(json.dumps(realm))
 (generated / 'ci-clients.json').write_text(json.dumps(clients))
 (generated / 'ci-clients.json').chmod(0o600)
