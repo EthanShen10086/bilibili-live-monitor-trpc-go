@@ -1,5 +1,5 @@
 {
-  "required_status_checks": {"strict": true, "contexts": ["go", "platform"]},
+  "required_status_checks": {"strict": true, "contexts": ["go", "platform", "contracts"]},
   "enforce_admins": false,
   "required_pull_request_reviews": {
     "dismiss_stale_reviews": true,

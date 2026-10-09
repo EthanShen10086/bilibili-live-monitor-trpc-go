@@ -1,5 +1,12 @@
 # Linux 云服务器部署、恢复与切换
 
+本页描述 `cmd/monitor` 的单订阅 systemd 交付，可选择 SQLite 或 PostgreSQL。
+当前 Mac 运行 Node，实现交接先按 [独立部署手册](STANDALONE_DEPLOYMENT.md)，
+云端测试成功后再禁用 Mac 自动启动并迁移状态。本页的 `switch` 适用于已经安装
+兼容 Go 管理端的同实现两端，不能直接假定 Node→Go 的跨实现迁移已被证明。
+Docker 的 `light/postgres` 模式见 [CLOUD_PLATFORM.md](CLOUD_PLATFORM.md)，
+完整多租户 Kafka 服务使用 [独立部署包](../deploy/event-platform/README.md)。
+
 ## 准备资源
 
 支持 systemd 的 Linux，建议 1 vCPU / 1 GB 起步；专用普通账号 live-monitor、SSH 密钥、出站能访问 B站及飞书。业务不需要公网 HTTP 端口。管理员首次准备：

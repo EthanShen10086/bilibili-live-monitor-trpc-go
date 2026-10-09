@@ -16,7 +16,7 @@ jobs:
           echo '127.0.0.1 api.localhost auth.localhost grafana.localhost' | sudo tee -a /etc/hosts
       - name: Actual APISIX platform
         working-directory: deploy/event-platform
-        run: docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile observability up -d --build
+        run: docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile cache --profile observability up -d --build
       - name: PostgreSQL module contracts
         run: |
           export EVENT_TEST_POSTGRES="postgres://platform:$(python3 -c "from pathlib import Path; print(dict(line.split('=',1) for line in Path('deploy/event-platform/.env').read_text().splitlines())['PG_PASSWORD'].strip(chr(39)))")@127.0.0.1:25439/platform?sslmode=disable"
@@ -28,11 +28,14 @@ jobs:
           docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile contracts run --rm kafka-contracts -test.v -test.timeout=4m
       - name: APISIX ingress and event path
         run: python3 tests/event-platform/contracts.py apisix
+      - name: Redis cache outage preserves business detection
+        working-directory: deploy/event-platform
+        run: docker compose --profile cache stop redis
       - name: Switch ingress to Nginx
         working-directory: deploy/event-platform
         run: |
           docker compose --profile apisix stop apisix
-          docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile nginx --profile observability up -d nginx
+          docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile nginx --profile cache --profile observability up -d nginx
       - name: Same Nginx contract suite
         run: python3 tests/event-platform/contracts.py nginx
       - name: Actual telemetry delivery
@@ -41,9 +44,9 @@ jobs:
         if: failure()
         working-directory: deploy/event-platform
         run: |
-          docker compose --profile apisix --profile nginx --profile observability ps
-          docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile nginx --profile observability logs --tail=100
+          docker compose --profile apisix --profile nginx --profile cache --profile observability ps
+          docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile nginx --profile cache --profile observability logs --tail=100
       - name: Cleanup disposable volumes
         if: always()
         working-directory: deploy/event-platform
-        run: docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile nginx --profile observability down -v
+        run: docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile nginx --profile cache --profile observability down -v

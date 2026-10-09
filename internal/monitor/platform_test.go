@@ -20,6 +20,13 @@ func TestPlatformConfigIsolation(t *testing.T) {
 	if c.Validate() == nil {
 		t.Fatal("distributed queue with SQLite")
 	}
+	c.Platform.Queue = "database"
+	c.Platform.Cache = "redis"
+	c.Platform.Redis.URLEnv = "TEST_REDIS"
+	if err := c.Validate(); err != nil {
+		t.Fatal("SQLite must support optional Redis caching", err)
+	}
+	c.Platform.Queue = "redis_streams"
 	c.Platform.Storage = "postgres"
 	c.Platform.Postgres.DSNEnv = "TEST_PG"
 	c.Platform.Redis.URLEnv = "TEST_REDIS"

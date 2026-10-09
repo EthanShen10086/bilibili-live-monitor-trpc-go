@@ -1,9 +1,20 @@
 # tRPC-Go 可扩展云端版：配置、部署与复现
 
-## 1. 三种部署
+本文范围是 `cmd/monitor` 的单订阅云服务，数据库选择 SQLite/PostgreSQL，缓存独立
+选择 memory/Redis；原 Redis Streams 配置继续兼容。这些组件不是互斥架构。
+多租户 Kafka、OIDC、共享检测和回放已经由 `cmd/event-platform` 实现，
+见 [事件平台部署包](../deploy/event-platform/README.md)。两种入口不要混用配置/迁移命令。
+Mac Node 到云端的正式切换见 [交接手册](STANDALONE_DEPLOYMENT.md)。
+
+## 1. 部署方式
+
+新部署只需 `manage.sh sqlite|postgres prepare [memory|redis]`。不传缓存选项默认
+memory；后续 `up/check` 自动读取配置并组合服务。Kafka 属于事件平台入口，其
+PostgreSQL、Redis、Kafka 可以同时启用。下面的 light/platform 名称仅为已有部署别名。
 
 - 本地轻量：默认 config.yaml，SQLite + 进程内队列统计缓存，role=both。不连接 PostgreSQL / Redis，不启动额外服务。Node 和独立原生 Go 的本地代码不受本扩展影响。
 - 云端轻量：deploy/cloud/config.light.yaml，Linux 后台运行相同 SQLite 逻辑，Nginx 可选。
+- 云端 PostgreSQL-only：deploy/cloud/config.postgres.yaml，PostgreSQL 持久化、memory 缓存、database 队列，不启动 Redis 或 Kafka。
 - 云端平台：deploy/cloud/config.platform.yaml，PostgreSQL 持久化 + Redis 状态缓存 / Streams 唤醒，支持 both / detector / sender。Redis 缓存和队列均可单独关闭（cache: memory、queue: database）。
 
 平台模式目前支持轮询；官方模式长连接的分布式会话与授权管理尚未实现，配置将明确拒绝，不暗中切回轮询。当前仍是一个配置一个订阅，可部署多份配置扩展房间和接收对象；没有新增订阅 CRUD 或多租户网页。
@@ -48,7 +59,8 @@ Go 驱动使用 pgx、go-redis，版本在 go.mod/go.sum 锁定。框架继续�
 - Redis Streams 只传 job key。消息可能重复，PostgreSQL 状态决定能否发送；确认在数据库提交成功或持久化重试状态之后执行。未确认消息可回收。
 - 进程退出后任务租约到期可回收；启动时 Redis 不可达则明确失败。运行中 Redis 故障在状态 queue_error 显示，PostgreSQL 扫描仍能发送和重试；恢复后再次发布未确认 outbox。
 - Streams 近似限长 10000，确认唤醒消息后删除；Redis 使用 noeviction，避免把 Streams 当缓存随机淘汰。任务丢失唤醒仍由数据库恢复，Redis 不作为发送记录依据。
-- Redis 缓存只用于 /status 的短期只读结果（2 秒），缓存失败读原状态文件；/healthz 不缓存。缓存 key 按服务启动实例隔离，不混淆不同副本。
+- 管理接口使用 Redis 缓存 /status 的短期只读结果（2 秒），缓存失败读原状态文件；/healthz 不缓存。状态缓存 key 按服务启动实例隔离，不混淆不同副本。
+- 明确选择 `cache: redis` 后，检测 worker 还缓存成功的房间观察，最多 5 秒且不超过检测间隔；拒绝过期、未来时间、错误房间及损坏数据，运行中缓存故障回源。默认 memory 模式只缓存 `/status`，检测仍直接回源，保持原轮询行为。观察 key 按订阅隔离，不能代替事件平台跨订阅共享检测；短号与规范房间 ID 不一致时不缓存观察。数据库负责去重和发送状态，不能从缓存判断是否已通知。
 - 保留现有 1 分钟 / 5 分钟降频、TTL、失败退避、90 天限量清理、日志轮转。PostgreSQL version 驱动队列统计刷新；空闲时仍约 10 秒检查一次，Redis 模式额外约 5 秒脉冲，最多每批 10 条 outbox。
 
 租约解决正常副本争抢和恢复，不能让外部飞书 API 与数据库形成跨系统事务。机器时钟应同步；发生 PostgreSQL 网络中断时实例退出，由进程管理器退避重启，禁止盲目继续发送。
@@ -67,7 +79,19 @@ cd deploy/cloud
 ./manage.sh light up
 ```
 
-平台版（新的安装目录或先停旧版本再人工审阅配置）：
+PostgreSQL-only（新的安装目录，先不启用正式发送端）：
+
+```sh
+cd deploy/cloud
+./manage.sh postgres prepare
+# 设置飞书变量、POSTGRES_PASSWORD 和 MONITOR_POSTGRES_DSN
+./manage.sh postgres check
+./manage.sh postgres migrate
+# 核对迁移状态、确认原发送端已停止后：
+./manage.sh postgres up
+```
+
+PostgreSQL/Redis 兼容版（新的安装目录或先停旧版本再人工审阅配置）：
 
 ```sh
 cd deploy/cloud
@@ -157,19 +181,19 @@ chmod 644 auth/status.htpasswd
 go test -race ./...
 go vet ./...
 # 临时/测试数据库与 Redis，测试只删除随机 test-* scope
-MONITOR_TEST_POSTGRES='测试 PostgreSQL 连接 URL' MONITOR_TEST_REDIS='测试 Redis URL' go test -race -v ./...
+MONITOR_TEST_POSTGRES='测试 PostgreSQL 连接 URL' MONITOR_TEST_REDIS='测试 Redis URL' make test-integration
 # 构建后，全部使用临时目录和假飞书凭证
 python3 scripts/smoke.py
 NGINX_BIN=/你的/nginx python3 scripts/smoke-nginx.py
 ```
 
-GitHub Actions cloud-platform.yml 使用原生 PostgreSQL + Redis、Go 竞态检查、真实框架进程、Nginx HTTPS 冒烟、Compose 校验及容器构建。不要把生产凭证放进测试环境；无集成环境变量时数据库相关用例明确 skip。
+GitHub Actions cloud-platform.yml 使用原生 PostgreSQL + Redis、Go 竞态检查、真实框架进程、Nginx HTTPS 冒烟、Compose 校验及容器构建。另分别运行 SQLite 和 PostgreSQL-only 只读非 root 容器，后者不连接 Redis。集成用例使用 `integration` tag；缺少隔离后端配置明确失败，普通单元测试不会误连生产后端。
 
 本次本机原生 PostgreSQL 初始化被共享内存权限拒绝，改用 PGlite 的 PostgreSQL wire / SQL 语义测试；PGlite 的连接多路复用不能作为原生 PostgreSQL 的真实多进程锁证明。Redis 为真实临时 Redis 进程。Nginx 编译成功，但 macOS 工具禁止读取网络 sysctl，故本机 -t / 启动被拒绝；真实 Linux CI 和云服务器结果分别报告，不能用文件存在代替运行验收。
 
 ## 8. 后续扩展
 
-Repository / Cache / TaskQueue 为独立接口，Kafka 没有实现，配置 kafka 会明确拒绝；当前适配器为数据库队列与 Redis Streams。不同时部署 Kafka、RabbitMQ、Redis 三套队列。订阅管理 API、多租户鉴权、共享上游房间探测以及自动平台→SQLite 导出属于后续需求，当前不标记为已交付。
+本单订阅入口的 Repository / Cache / TaskQueue 为独立接口，支持数据库队列与 Redis Streams；不能将 `queue` 写成 kafka。Kafka、多租户 API、鉴权、共享探测已在事件平台入口实现，两者无需同时使用 Redis Streams 和 Kafka。PostgreSQL/事件平台到 SQLite 的自动导出合并仍未提供，不能无状态回切。
 
 ### 已验证的 Linux CI（2026-10-09）
 

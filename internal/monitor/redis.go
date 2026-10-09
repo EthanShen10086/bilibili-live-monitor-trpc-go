@@ -59,7 +59,11 @@ type RedisCache struct {
 }
 
 func redisClient(c Config) (*redis.Client, error) {
-	opts, e := redis.ParseURL(os.Getenv(c.Platform.Redis.URLEnv))
+	return redisClientURL(os.Getenv(c.Platform.Redis.URLEnv))
+}
+
+func redisClientURL(rawURL string) (*redis.Client, error) {
+	opts, e := redis.ParseURL(rawURL)
 	if e != nil {
 		return nil, fmt.Errorf("redis URL invalid")
 	}
@@ -84,11 +88,16 @@ func OpenCache(c Config) (Cache, error) {
 	if c.Platform.CacheMode() == "memory" {
 		return NewMemoryCache(), nil
 	}
-	client, e := redisClient(c)
+	return OpenRedisCache(os.Getenv(c.Platform.Redis.URLEnv), "live-monitor:"+c.Platform.SubscriptionID+":cache:")
+}
+
+// OpenRedisCache shares bounded, fail-open runtime cache behavior between entry points.
+func OpenRedisCache(rawURL, prefix string) (Cache, error) {
+	client, e := redisClientURL(rawURL)
 	if e != nil {
 		return nil, e
 	}
-	return &RedisCache{Client: client, Prefix: "live-monitor:" + c.Platform.SubscriptionID + ":cache:"}, nil
+	return &RedisCache{Client: client, Prefix: prefix}, nil
 }
 
 func (c *RedisCache) Get(ctx context.Context, k string) ([]byte, bool) {

@@ -4,3 +4,6 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+  sender:
+    depends_on:
+      redis: {condition: service_healthy}

@@ -55,6 +55,15 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 	h := monitor.NewHTTP()
 	h.SetObserver(telemetry)
 	defer h.Client.CloseIdleConnections()
+	var detector monitor.Detector = h
+	if role == "detector" && c.RedisURL != "" {
+		cache, err := monitor.OpenRedisCache(c.RedisURL, "live-platform:observation:")
+		if err != nil {
+			return err
+		}
+		defer resource.Close(cache)
+		detector = monitor.WithObservationCache(h, cache, time.Now)
+	}
 	control := store.Control{DB: db}
 	events := store.Events{DB: db}
 	notifications := store.Notifications{DB: db}
@@ -79,7 +88,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
-					if e = detect(ctx, room, owner, h, control, events, notifications); e != nil {
+					if e = detect(ctx, room, owner, detector, control, events, notifications); e != nil {
 						slog.WarnContext(ctx, "room_probe_failed", "room_id", room, "error_type", typeName(e))
 					}
 				}

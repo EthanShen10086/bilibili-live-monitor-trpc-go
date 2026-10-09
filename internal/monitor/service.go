@@ -79,11 +79,13 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 	if deps.OpenQueue == nil {
 		deps.OpenQueue = defaults.OpenQueue
 	}
+	if deps.OpenCache == nil {
+		deps.OpenCache = defaults.OpenCache
+	}
 	nowTime := deps.Clock.Now
 	if deps.Observer == nil {
 		deps.Observer = noopObserver{}
 	}
-	deps.Detector = observedDetector{deps.Detector, deps.Observer}
 	deps.Notifier = observedNotifier{deps.Notifier, deps.Observer}
 	lifeCtx, cancelLife := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelLife()
@@ -108,6 +110,17 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 		return e
 	}
 	defer resource.Close(db)
+	// Only explicit Redis mode uses a cross-process observation cache. Default
+	// memory mode preserves fresh upstream polling and its existing timing.
+	if c.Platform.CacheMode() == "redis" && c.Platform.WorkerRole() != "sender" {
+		cache, cacheErr := deps.OpenCache(c)
+		if cacheErr != nil {
+			return cacheErr
+		}
+		defer resource.Close(cache)
+		deps.Detector = cachedDetector{Detector: deps.Detector, cache: cache, now: nowTime}
+	}
+	deps.Detector = observedDetector{deps.Detector, deps.Observer}
 	host, err := os.Hostname()
 	if err != nil {
 		return err
@@ -331,7 +344,7 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 							s.State = "blocked"
 						}
 						s.LastError = err.Error()
-						next = nowTime().Add(RetryDelay(e, failures, currentInterval))
+						next = nowTime().Add(RetryDelay(err, failures, currentInterval))
 						Event(root, "detector_error", s.LastError)
 					} else {
 						if ctx.Err() == nil && c.InWindow(nowTime()) {

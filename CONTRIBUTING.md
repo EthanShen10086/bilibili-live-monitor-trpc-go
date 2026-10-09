@@ -51,7 +51,7 @@ pre-push 读取 Git 提供的每个待推送 commit，导出提交快照执行 v
 
 单元/组件测试与源码同包 *_test.go：表驱动覆盖边界；断言对外行为/持久化结果；优先标准 testing、httptest、临时 SQLite 和注入 fake。不调用真实 B站/飞书、不读取用户 .env、不写用户 var。t.Setenv 或全局日志修改的测试不使用 t.Parallel。异步测试用 channel 协调与有界等待，禁止靠长 sleep 凑结果。
 
-所有真实后端测试使用 `//go:build integration`，由专用 CI job 提供一次性 PostgreSQL/Redis；配置缺失必须失败。不可指向生产 DSN。测试按 subscription_id 隔离，清理自身 scope/stream；不对共享库执行破坏性清理。
+单订阅真实后端测试使用 `//go:build integration`，事件平台使用 `//go:build eventintegration`，由专用 CI 提供一次性 PostgreSQL/Redis/Kafka；配置缺失必须失败。不可指向生产 DSN。测试按 subscription_id 或随机 schema 隔离，清理自身 scope/stream；不对共享库执行破坏性清理。
 
 行为修复先添加能复现问题的测试；重点覆盖幂等、状态转移、取消、重试、租约丢失、异常恢复和数据写入失败。纯格式/文档不新增镜像实现的测试。覆盖率报告用于定位空白，不以统一 80% 代替正确性；provider mock、后端集成、进程 smoke、真实消息送达和部署证明分别报告。
 
@@ -59,6 +59,6 @@ pre-push 读取 Git 提供的每个待推送 commit，导出提交快照执行 v
 
 feature 分支开发，小 PR、一项职责；及时同步主分支，语义解决冲突，保留他人的未提交工作。PR 使用模板描述触发问题、行为变化、检查结果、兼容性、回滚与尚未验证的环境。改变端口/配置/状态/错误契约时先列出已有调用者与迁移策略，再实现并补文档。
 
-CODEOWNERS 指定维护者；新增协作者时按领域调整 owner。GitHub main 保护规则：main 禁止直接/强制 push 和删除，必须 PR、至少一次批准、CODEOWNER review、过期 review 失效、讨论解决，要求 `go`、`platform` 两个检查成功（已核对实际 GitHub check 名称）。2026-10-09 已通过 GitHub API 启用以上 main 分支保护，配置保存在 .github/branch-protection.json；保留管理员应急绕过，日常仍应遵循 PR。CODEOWNERS 与新 lint 门禁代码目前在功能分支，需要合入 main 才用于之后的审查/CI；远端保护已经生效。
+CODEOWNERS 指定维护者；新增协作者时按领域调整 owner。GitHub main 保护规则要求 PR、至少一次批准、CODEOWNER review、过期 review 失效、讨论解决，禁止强制 push 和删除，并要求 `go`、`platform`、`contracts` 三项检查成功。2026-10-09 已通过 GitHub API 启用，配置保存在 .github/branch-protection.json；CODEOWNERS、门禁代码和事件平台已合入 main。保留管理员应急绕过，日常仍应遵循 PR。
 
 参考 CloudOP backend 的 service/logic/repo 隔离和明确错误处理；本项目进一步统一工具版本、检查入口、源快照、隔离测试与 CI 证据。CloudOP 的内网插件、patch mock、自动 fmt/tidy build 和全局 types.go 约定不适用于本仓库。不能用工具数量证明架构优雅；审查重点是契约、职责、可读性与恢复路径。

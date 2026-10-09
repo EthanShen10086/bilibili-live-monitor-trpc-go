@@ -21,6 +21,7 @@ x-platform: &platform
     EVENT_ADMIN_SUBJECTS: ${EVENT_ADMIN_SUBJECTS:-}
     EVENT_KAFKA_BROKERS: kafka:9092
     EVENT_KAFKA_TOPIC: live.events.v1
+    EVENT_REDIS_URL: ${EVENT_REDIS_URL:-}
     EVENT_SMTP_ALLOWED_HOSTS: ${EVENT_SMTP_ALLOWED_HOSTS:-}
     EVENT_RETENTION_DAYS: ${EVENT_RETENTION_DAYS:-90}
     EVENT_TRACING: 'true'
@@ -38,6 +39,20 @@ x-platform: &platform
     retries: 4
     start_period: 90s
 services:
+  redis:
+    profiles: [cache]
+    image: redis:7.4.6-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: [sh, -ec, 'test -n "$$REDIS_PASSWORD"; exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 96mb --maxmemory-policy allkeys-lru --save "" --appendonly no']
+    networks: [backend]
+    restart: unless-stopped
+    mem_limit: 128m
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
   postgres:
     image: postgres:17.6-alpine
     environment:
@@ -140,6 +155,9 @@ services:
   detector:
     <<: *platform
     command: [--role, detector]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy, required: false}
   relay:
     <<: *platform
     command: [--role, relay]

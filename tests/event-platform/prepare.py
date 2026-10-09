@@ -20,7 +20,9 @@ subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-da
 (certs / 'ca.crt').write_bytes((certs / 'tls.crt').read_bytes())
 for file in certs.iterdir():
     file.chmod(0o644 if file.suffix == '.crt' else 0o600)
+redis_password = secrets.token_hex(16)
 env = {'TLS_DIR': str(certs), 'PG_PASSWORD': secrets.token_hex(16), 'KC_PG_PASSWORD': secrets.token_hex(16),
+       'REDIS_PASSWORD': redis_password, 'EVENT_REDIS_URL': f'redis://:{redis_password}@redis:6379/0',
        'KC_ADMIN_PASSWORD': secrets.token_hex(16), 'GRAFANA_OIDC_SECRET': secrets.token_hex(16),
        'EVENT_CREDENTIAL_KEY_ID': 'ci', 'EVENT_CREDENTIAL_KEYS': json.dumps({'ci': base64.b64encode(secrets.token_bytes(32)).decode()}),
        'EVENT_ADMIN_SUBJECTS': '00000000-0000-4000-8000-000000000001',
