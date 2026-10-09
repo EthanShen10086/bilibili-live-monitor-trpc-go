@@ -1,8 +1,11 @@
 package trpchost
 
 import (
+	"context"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,5 +66,31 @@ func TestStatusCacheDoesNotCacheHealth(t *testing.T) {
 	h.ServeHTTP(r, httptest.NewRequest("GET", "/healthz", nil))
 	if r.Code != 200 {
 		t.Fatal("healthy standby rejected", r.Code)
+	}
+}
+
+func TestIndependentProbesAndMetrics(t *testing.T) {
+	root := t.TempDir()
+	if err := monitor.AtomicJSON(filepath.Join(root, "var/status.json"), monitor.Status{Running: true, State: "healthy", Updated: time.Now().UnixMilli(), NotificationState: "blocked"}); err != nil {
+		t.Fatal(err)
+	}
+	h := HandlerWithMetrics(root, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("metric 1\n")) }))
+	for path, code := range map[string]int{"/livez": 200, "/readyz": 503, "/healthz": 503, "/metrics": 200} {
+		r := httptest.NewRecorder()
+		h.ServeHTTP(r, httptest.NewRequest("GET", path, nil))
+		if r.Code != code {
+			t.Fatalf("%s: %d", path, r.Code)
+		}
+		r = httptest.NewRecorder()
+		h.ServeHTTP(r, httptest.NewRequest("POST", path, nil))
+		if r.Code != 405 {
+			t.Fatalf("POST %s: %d", path, r.Code)
+		}
+	}
+}
+func TestRecoveryReturnsErrorAfterPanic(t *testing.T) {
+	rsp, err := recovery(context.Background(), nil, func(context.Context, interface{}) (interface{}, error) { panic("sensitive") })
+	if err == nil || rsp != nil || strings.Contains(err.Error(), "sensitive") {
+		t.Fatal(rsp, err)
 	}
 }

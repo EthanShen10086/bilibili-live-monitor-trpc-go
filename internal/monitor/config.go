@@ -13,6 +13,11 @@ import (
 )
 
 type Config struct {
+	Observability struct {
+		Tracing     bool     `yaml:"tracing"`
+		SampleRatio *float64 `yaml:"sample_ratio,omitempty"`
+		ServiceName string   `yaml:"service_name,omitempty"`
+	} `yaml:"observability"`
 	Platform    PlatformConfig `yaml:"platform"`
 	Maintenance struct {
 		RetentionDays *int `yaml:"history_retention_days,omitempty"`
@@ -133,6 +138,9 @@ func minutes(s string) (int, error) {
 	return h*60 + m, nil
 }
 func (c Config) Validate() error {
+	if p := c.Observability.SampleRatio; p != nil && (*p < 0 || *p > 1) {
+		return fmt.Errorf("observability.sample_ratio must be 0..1")
+	}
 	if err := c.Platform.Validate(c); err != nil {
 		return err
 	}

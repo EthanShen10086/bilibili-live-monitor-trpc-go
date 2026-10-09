@@ -23,10 +23,20 @@ func Retryable(e error) bool {
 	return true
 }
 
-type HTTP struct{ Client *http.Client }
+type HTTP struct {
+	Client   *http.Client
+	observer Observer
+}
+
+func (h *HTTP) SetObserver(o Observer) { h.observer = o }
 
 func NewHTTP() *HTTP { return &HTTP{Client: &http.Client{Timeout: 10 * time.Second}} }
-func (h *HTTP) JSON(ctx context.Context, method, url string, body []byte, headers map[string]string, out any) error {
+func (h *HTTP) JSON(ctx context.Context, method, url string, body []byte, headers map[string]string, out any) (err error) {
+	if h.observer != nil {
+		var end func(error)
+		ctx, end = h.observer.Begin(ctx, "http")
+		defer func() { end(err) }()
+	}
 	req, e := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if e != nil {
 		return &RemoteError{"HTTP", "request", false}
