@@ -1,8 +1,8 @@
 services:
   api:
-    environment: {EVENT_ADMIN_SUBJECTS: '00000000-0000-4000-8000-000000000001'}
+    environment: {EVENT_ADMIN_SUBJECTS: '00000000-0000-4000-8000-000000000001', EVENT_TRACE_SAMPLE_RATIO: '1'}
   sender:
-    environment: {EVENT_SMTP_ALLOWED_HOSTS: mailpit}
+    environment: {EVENT_SMTP_ALLOWED_HOSTS: mailpit, EVENT_TRACE_SAMPLE_RATIO: '1'}
   mock:
     image: python:3.13.7-alpine
     command: [python3, /test/mock.py]

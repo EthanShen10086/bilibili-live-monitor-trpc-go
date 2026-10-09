@@ -42,6 +42,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 	}
 	var legacy monitor.Config
 	legacy.Observability.Tracing = c.Tracing
+	legacy.Observability.SampleRatio = &c.TraceSampleRatio
 	legacy.Observability.ServiceName = "live-platform-" + role
 	telemetry, e := observability.New(ctx, legacy)
 	if e != nil {
@@ -192,6 +193,7 @@ func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observ
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	nextCleanup := time.Now()
 	done := make(chan error, 3)
 	go func() { done <- serve(ctx, path, mux) }()
 	go func() { done <- worker(ctx) }()
@@ -211,7 +213,13 @@ func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observ
 			}
 			progress.Store(time.Now().Unix())
 			heartbeat.Set(float64(progress.Load()))
-			return events.Cleanup(ctx, retention)
+			if time.Now().After(nextCleanup) {
+				if err := events.Cleanup(ctx, retention); err != nil {
+					return err
+				}
+				nextCleanup = time.Now().Add(time.Hour)
+			}
+			return nil
 		})
 	}()
 	e := <-done

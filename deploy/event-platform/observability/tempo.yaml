@@ -8,7 +8,7 @@ distributor:
         http: {endpoint: '0.0.0.0:4318'}
 compactor:
   compaction:
-    block_retention: 168h
+    block_retention: ${TRACE_RETENTION:-168h}
 storage:
   trace:
     backend: local
