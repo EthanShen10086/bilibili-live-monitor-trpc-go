@@ -1,0 +1,51 @@
+subscription:
+  room_id: 1616
+detector:
+  mode: polling
+  polling:
+    interval_minutes: 1  # 未开播或本场通知未成功时，查询结束后等待 1 分钟；可设 1–60
+    notified_live_interval_minutes: 5  # 本场通知成功后低频确认直播状态；下播后恢复正常间隔
+    timeout_seconds: 5
+  official:
+    app_id_env: BILI_APP_ID
+    access_key_id_env: BILI_ACCESS_KEY_ID
+    access_key_secret_env: BILI_ACCESS_KEY_SECRET
+    anchor_code_env: BILI_ANCHOR_CODE
+schedule:
+  timezone: Asia/Shanghai
+  weekdays: [3, 5, 6, 7]
+  start: '18:00'
+  end: '24:00'
+notification:
+  mode: feishu_group
+  pending_ttl_minutes: 30
+  group:
+    webhook_env: FEISHU_WEBHOOK
+    secret_env: FEISHU_WEBHOOK_SECRET
+  private:
+    app_id_env: FEISHU_APP_ID
+    app_secret_env: FEISHU_APP_SECRET
+    receive_id_type: open_id
+    receive_id_env: FEISHU_RECEIVE_ID
+deployment:
+  active: cloud
+  local:
+    confirm_each_boot: true
+  cloud:
+    ssh_host: live-monitor
+    install_dir: /opt/live-monitor
+
+maintenance:
+  history_retention_days: 90  # 每天最多清理 200 条旧终态任务；保留当前场次和待发送任务，0 为关闭
+
+# Lightweight by default: no external connections or background services.
+platform:
+  storage: postgres
+  cache: redis
+  queue: redis_streams
+  role: both
+  subscription_id: room-1616-main
+  postgres:
+    dsn_env: MONITOR_POSTGRES_DSN
+  redis:
+    url_env: MONITOR_REDIS_URL

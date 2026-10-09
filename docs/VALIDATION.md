@@ -36,3 +36,7 @@ Node 各副本 48 项通过、1 项真实平台测试跳过；Go 34 项、tRPC-G
 ## 2026-10-09 数据层增量验证
 
 新增 pending 部分索引（next、expires）。Node 主部署全量 49 项通过、1 项真实平台测试跳过；独立 Node 与合集分别构建并通过 3 项数据层测试。三个 Go 模块完整 go test -race ./... 通过。测试用 2000 条历史通知验证查询计划命中索引、过期处理、下一任务选择及重复打开保留数据。数据/代理选型说明见 docs/DATA_AND_PROXY.md（从 docs/ 目录阅读时为 DATA_AND_PROXY.md）。未发送真实通知，Mac launchctl 重启仍被系统拒绝，真实云端未部署。
+
+## 2026-10-09 可选云端平台
+
+平台增量的本机完整竞态测试 45 项通过（5 项数据库/Redis 集成用例使用 PGlite SQL/wire 与真实临时 Redis）；Go vet、Mac 构建通过，原轻量 tRPC 进程冒烟通过。Compose v2.39.4 实际校验 light / platform + workers + nginx 模型通过。原生 PostgreSQL 初始化被当前工具共享内存权限拒绝；Nginx 编译通过，实际 -t 被网络 sysctl 权限拒绝。已提供 GitHub Actions 原生 PostgreSQL/Redis、Nginx HTTPS、容器构建验收；CI 与真实云端结果需独立核对。未接触真实飞书凭证，未发送真实消息，未启动用户 Mac 的新服务。详见 CLOUD_PLATFORM.md。

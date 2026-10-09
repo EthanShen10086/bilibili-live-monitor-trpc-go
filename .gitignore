@@ -22,3 +22,11 @@
 **/coverage/
 .DS_Store
 .work/
+
+# Cloud site-specific configuration and TLS/basic-auth material
+/deploy/cloud/config.yaml
+/deploy/cloud/tls/*
+/deploy/cloud/auth/*
+
+/deploy/cloud/config.sender.yaml
+/deploy/cloud/trpc.sender.yaml

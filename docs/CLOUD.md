@@ -77,3 +77,5 @@ journalctl --user -u live-monitor.service -n 100
 管理员 reboot 后检查状态、群消息及唯一实例。当前只有交叉编译和模拟切换证明，没有服务器资源则未完成真实 systemd、SSH 切换及重启验收。升级先 stop、备份状态、替换二进制、start/health，保留 .env 与数据库。
 
 tRPC-Go 额外带 trpc_go.yaml，19028/19029 只监听回环，不开放安全组；需要时用 SSH 端口转发。
+
+扩展云端部署（PostgreSQL / Redis / 可选 Nginx）见 [CLOUD_PLATFORM.md](CLOUD_PLATFORM.md)。

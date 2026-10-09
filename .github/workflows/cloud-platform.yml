@@ -1,0 +1,56 @@
+name: Cloud platform integration
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  platform:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: monitor
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: monitor
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U monitor -d monitor"
+          --health-interval 10s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7.4.6-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: PostgreSQL and Redis integration + race detector
+        env:
+          MONITOR_TEST_POSTGRES: postgres://monitor:test-only-password@127.0.0.1:5432/monitor?sslmode=disable
+          MONITOR_TEST_REDIS: redis://127.0.0.1:6379
+        run: go test -race -v ./...
+      - run: go vet ./...
+      - run: mkdir -p dist && go build -trimpath -o dist/monitor ./cmd/monitor
+      - name: Real framework process smoke
+        run: python3 scripts/smoke.py
+      - name: Actual TLS proxy smoke
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y nginx
+          NGINX_BIN=/usr/sbin/nginx python3 scripts/smoke-nginx.py
+      - name: Compose model validation
+        run: |
+          cd deploy/cloud
+          cp .env.example .env
+          cp config.light.yaml config.yaml
+          docker compose config --quiet
+          sed 's/role: both/role: sender/' config.platform.yaml > config.sender.yaml
+          sed -e 's/19028/19030/' -e 's/19029/19031/' ../../trpc_go.yaml > trpc.sender.yaml
+          cp config.platform.yaml config.yaml
+          docker compose --profile platform --profile workers --profile nginx -f compose.yaml -f platform.compose.yaml config --quiet
+      - name: Cloud container build
+        run: docker build -f deploy/cloud/Dockerfile -t live-monitor-test .

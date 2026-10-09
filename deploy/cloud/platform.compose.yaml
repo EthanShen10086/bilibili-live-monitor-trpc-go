@@ -1,0 +1,6 @@
+# Merge after compose.yaml for the distributed PostgreSQL/Redis profile.
+services:
+  monitor:
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}

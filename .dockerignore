@@ -1,0 +1,14 @@
+.git
+.work
+.cache
+.runtime
+dist
+var
+evidence
+**/.env
+**/.env.*
+**/*.sqlite*
+**/*.db*
+**/*.log
+deploy/cloud/tls
+deploy/cloud/auth
