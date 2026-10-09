@@ -1,12 +1,16 @@
 # 上线改造与运维约定
 
+本页主要约定 `cmd/monitor` 单订阅服务。完整 Kafka 事件平台的运行、角色、存储
+和网关约定见 [部署包](../deploy/event-platform/README.md)，本页的“无需 Kafka”
+仅用于单订阅方案。统一入口选择、Mac→云端步骤见 [独立部署手册](STANDALONE_DEPLOYMENT.md)。
+
 ## 组件选择
 
 当前一个房间、一分钟轮询、每场一次通知，推荐 `config.light.yaml`：SQLite 持久化 + 数据库任务队列 + 进程内短缓存。数据库必需，用于保存观察、场次去重、任务、重试和失败记录；缓存用于减小只读状态查询成本，不缓存健康探针。
 
 需要多个云端副本、独立发送进程或多机故障接管时，选择 PostgreSQL。业务通过 Repository、Detector、Notifier、TaskQueue、Clock、Observer 接口注入，适配器与 worker 协调分开。默认数据库队列已经提供持久化、原子领取、幂等键、重试、TTL、失败终态。Redis Streams 是可选唤醒通道，PostgreSQL 才是通知记录的依据；即使丢失唤醒，数据库扫描仍能恢复。Redis 缓存每次最多等待 250ms，失败后绕过五秒，启动时所选依赖不可用仍明确报错。
 
-Kafka 暂不增加。它适合需要多消费者、长期事件回放、多个下游系统或高吞吐的事件平台。单房间监控增加 Kafka 会多出 broker、磁盘、分区和消费组运维成本，并不能解决外部飞书 API 与数据库之间的原子提交。以后出现这些需求时，通过 TaskQueue 接入，并继续保留事务 outbox、稳定事件键和消费者去重。
+单订阅入口不依赖 Kafka。多消费者、历史回放与多下游已使用独立事件平台实现，保留事务 Outbox、稳定事件键、独立消费组和消费者去重。单房间服务可使用 SQLite 或 PostgreSQL-only；Kafka 不能解决外部飞书 API 与数据库之间的原子提交。
 
 参考：[Kafka 使用场景](https://kafka.apache.org/22/getting-started/uses/)、[Prometheus 埋点](https://prometheus.io/docs/practices/instrumentation/)、[告警实践](https://prometheus.io/docs/practices/alerting/)。不照搬公司内网插件；采用公开 tRPC 框架的插件初始化、过滤器恢复和生命周期。
 
@@ -87,4 +91,4 @@ docker compose --profile platform -f compose.yaml -f platform.compose.yaml exec 
 
 CI 执行 race、vet、gofmt、govulncheck、真实 PostgreSQL/Redis 集成、coverage artifact、二进制进程和 TLS 代理冒烟，以及容器运行/探针验证。覆盖率是可检查报告，不把总行覆盖率当作业务验收。
 
-上线前仍需用真实账户验证通知可见性、手机提醒、正式服务器的退出/重启恢复、告警投递和备份恢复。检查时区/NTP、磁盘容量与 inode、OOM、证书续期、上游配额、Secret 轮换和出站网络。当前低频轮询可能漏掉两次查询之间的短直播；通知后五分钟确认会扩大下播观测延迟，如需更短时延应缩短配置或接入授权事件。没有订阅 CRUD、共享房间探测和自动凭证轮换，规模扩展前再实现，不能把增加进程数视作无限扩容。
+上线前仍需用真实账户验证通知可见性、手机提醒、正式服务器的退出/重启恢复、告警投递和备份恢复。检查时区/NTP、磁盘容量与 inode、OOM、证书续期、上游配额、Secret 轮换和出站网络。低频轮询可能漏掉两次查询之间的短直播；通知后五分钟确认会扩大下播观测延迟。订阅 CRUD、共享房间探测和凭证轮换属于事件平台；单订阅入口保持较小运维范围，不能把增加进程数视作无限扩容。
