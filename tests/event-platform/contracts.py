@@ -82,7 +82,8 @@ base = '/api/v1/tenants/' + tenant['id']
 assert request(base + '/subscriptions', token=outsider)[0] == 403
 assert request(base + '/members/00000000-0000-4000-8000-000000000003', 'PUT', {'role': 'viewer'}, admin)[0] == 200
 assert request(base + '/members', token=viewer)[0] == 200
-assert request(base + '/targets', 'POST', {'name': 'forbidden'}, viewer)[0] in (400, 403)
+assert request(base + '/targets', 'POST', {'name': 'forbidden', 'kind': 'smtp',
+               'credentials': {'smtp_host': 'mailpit', 'smtp_port': 1025, 'from': 'monitor@example.test', 'recipient': 'user@example.test'}}, viewer)[0] == 403
 
 # Independent channels share one detected room. One temporary Feishu failure cannot suppress SMTP.
 service('stop', '--timeout', '10', 'kafka')
@@ -136,6 +137,20 @@ with ThreadPoolExecutor(max_workers=30) as pool:
     statuses = list(pool.map(lambda _: request('/api/v1/tenants', token=admin, pace=False)[0], range(80)))
 assert 429 in statuses, 'gateway rate limit absent'
 time.sleep(4)
+
+# Hold the actual database read lock: a healthy authenticated request must stop
+# within the entry/API budget, then recover without restarting the gateway.
+sql_command = ['exec', '-T', 'postgres', 'psql', '-U', 'platform', '-d', 'platform', '-Atc']
+blocker = subprocess.Popen(compose + sql_command + ['BEGIN; LOCK TABLE ep_tenants IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(16); COMMIT;'], cwd=deploy, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+try:
+    wait(lambda: service(*(sql_command + ["SELECT EXISTS(SELECT FROM pg_locks WHERE relation='ep_tenants'::regclass AND mode='AccessExclusiveLock' AND granted)"])).strip() == 't', 'database fault injection', 10)
+    started = time.monotonic()
+    assert request('/api/v1/tenants', token=admin)[0] in (500, 502, 503, 504), 'blocked upstream did not time out'
+    assert time.monotonic() - started < 14, 'request exceeded gateway timeout budget'
+finally:
+    _, error = blocker.communicate(timeout=25)
+    assert blocker.returncode == 0, error.decode()
+wait(lambda: request('/api/v1/tenants', token=admin)[0] == 200, 'recovery from upstream timeout')
 
 # Management authentication failure must reject access while detection remains alive.
 probes = request('https://127.0.0.1:19443/test/state')[1]['probes']
