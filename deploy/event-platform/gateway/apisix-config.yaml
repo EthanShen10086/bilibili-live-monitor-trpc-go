@@ -1,5 +1,8 @@
 apisix:
   node_listen: 9080
+  dns_resolver: [127.0.0.11]
+  dns_resolver_valid: 5
+  enable_ipv6: false
   enable_admin: false
   ssl:
     enable: true
@@ -11,6 +14,9 @@ deployment:
   role_data_plane:
     config_provider: yaml
 nginx_config:
+  # This Compose profile has a 384MiB budget. Multiple auto workers also keep
+  # independent negative DNS caches during backend bootstrap/restarts.
+  worker_processes: 1
   error_log: /dev/stderr
   error_log_level: warn
   http:

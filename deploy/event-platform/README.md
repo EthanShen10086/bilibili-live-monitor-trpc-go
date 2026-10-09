@@ -22,6 +22,11 @@ Both entries share `gateway/policy.json`: Bearer auth, 64KiB bodies, IP limits,
 12-second upstream budgets, no upstream retries, no credential-response cache and
 removed client identity headers. The API independently validates JWTs and membership.
 Keycloak/Grafana cookies do not authorize management API requests.
+APISIX uses one worker within this single-host memory budget and Docker's private
+DNS resolver with a five-second positive TTL. It fails closed while backend DNS or
+authentication is unavailable; initial negative DNS answers can persist for 30 seconds.
+Wait for authenticated API readiness before sending management writes. Larger gateway
+deployments should size workers and service discovery separately from this profile.
 
 The `live-api` public client uses Keycloak device authorization for CLI users.
 POST form fields `client_id=live-api&scope=openid` to the issuer's
