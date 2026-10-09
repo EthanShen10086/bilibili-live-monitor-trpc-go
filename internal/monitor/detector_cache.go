@@ -15,6 +15,11 @@ type cachedDetector struct {
 	now   func() time.Time
 }
 
+// WithObservationCache adds bounded cache reuse without changing durable state.
+func WithObservationCache(detector Detector, cache Cache, now func() time.Time) Detector {
+	return cachedDetector{Detector: detector, cache: cache, now: now}
+}
+
 func (d cachedDetector) Probe(ctx context.Context, c Config) (Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return Observation{}, err

@@ -3,11 +3,23 @@
 This is an opt-in **single-host learning deployment**, not a production HA topology.
 The existing monitor CLI, SQLite and `deploy/cloud` profiles remain independent.
 Never start both senders for a subscription during migration.
-The APISIX plus observability profile has 6,272MiB (about 6.1GiB) of combined steady
+The APISIX plus observability and Redis cache profiles have 6,400MiB (6.25GiB) of combined steady
 container memory limits, plus migration/topic-initialization and host/build overhead.
 These limits are budgets, not measured consumption. Size the host from that budget
 and measure actual RSS, disk growth and latency before assigning production capacity.
 The lightweight profile's small-server sizing does not apply to this full stack.
+
+PostgreSQL, Redis and Kafka are complementary components, not alternative platform
+architectures. PostgreSQL owns durable state, Kafka carries retained events and Redis
+is an optional, disposable observation cache. The default `CACHE=redis ./manage.sh up`
+starts all three; fill `REDIS_PASSWORD` and `EVENT_REDIS_URL` in `.env` first. Use
+`CACHE=memory ./manage.sh up` to omit Redis and probe upstream directly. A cache change
+requires recreating the detector so the selected URL takes effect; no data migration
+is needed. For direct Compose commands add `--profile cache` when Redis is enabled.
+Cached room observations expire within five seconds or the polling interval, whichever
+is shorter. Runtime Redis failures fall back to upstream. Sessions, tenant permissions,
+notification deduplication and event offsets are never determined by Redis. Statistics
+query caching is not implemented; Kafka already carries the event stream independently.
 
 1. Copy `.env.example` to `.env`; provide random database/bootstrap/OAuth secrets and a
    JSON map of base64-encoded 32-byte AES keys. Keep previous key IDs during rotation.

@@ -91,8 +91,8 @@ func (p PlatformConfig) Validate(c Config) error {
 		return fmt.Errorf("platform.role must be both|detector|sender")
 	}
 	if p.StorageMode() == "sqlite" {
-		if p.QueueMode() != "database" || p.CacheMode() != "memory" || p.WorkerRole() != "both" {
-			return fmt.Errorf("distributed roles and Redis require PostgreSQL mode")
+		if p.QueueMode() != "database" || p.WorkerRole() != "both" {
+			return fmt.Errorf("distributed roles and Redis Streams require PostgreSQL mode")
 		}
 	} else {
 		if c.Deployment.Active != "cloud" || c.Detector.Mode != "polling" {

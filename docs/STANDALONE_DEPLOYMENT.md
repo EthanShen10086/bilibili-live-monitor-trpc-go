@@ -6,14 +6,12 @@ Mac 目录、相邻 Go 仓库或本地 replace。编译产物无需安装 Node/G
 
 ## 选择入口与数据库
 
-| 使用方式 | 入口/部署配置 | 持久化 | 其他基础设施 |
+| 入口 | 数据库 | 缓存 | 事件/任务传递 |
 | --- | --- | --- | --- |
-| 单订阅 SQLite | `cmd/monitor`，`manage.sh light` | 持久化卷中的 SQLite | 无，网关可选 |
-| 单订阅 PostgreSQL | `cmd/monitor`，`manage.sh postgres` | PostgreSQL | 无 Redis/Kafka，网关可选 |
-| 原 PostgreSQL/Redis 配置 | `cmd/monitor`，`manage.sh platform` | PostgreSQL | 可选缓存/Streams，保留兼容 |
-| 多租户事件平台 | `cmd/event-platform`，`deploy/event-platform` | PostgreSQL | Kafka、Keycloak、APISIX 或 Nginx |
+| 兼容单订阅 `cmd/monitor` | SQLite 或 PostgreSQL | 内存或 Redis，独立选择 | 数据库队列；原 PostgreSQL 配置兼容 Redis Streams |
+| 多租户 `cmd/event-platform` | PostgreSQL | 可选 Redis | Kafka，通知和统计独立消费组 |
 
-前两种都可以独立部署云服务器，不需要先在 Mac 运行 Go 服务。
+两个入口都可以独立部署云服务器，不需要先在 Mac 运行 Go 服务。
 完整事件平台目前不提供 SQLite 适配器；不能仅替换 DSN 就使用 SQLite。
 SQLite 适合单实例、本机持久化磁盘，不支持多个主机共同写一个文件。
 PostgreSQL 模式支持调度与任务租约；多租户和共享房间检测属于事件平台入口。
@@ -23,8 +21,9 @@ PostgreSQL 模式支持调度与任务租约；多租户和共享房间检测属
 
 SQLite 默认没有 Redis，`cache: memory` 用于状态接口的 2 秒内存缓存。
 PostgreSQL-only 同样有状态接口内存缓存，并非完全无缓存。
+SQLite 也可以启用 Redis，不会因此需要 PostgreSQL 或 Kafka。
 原 `platform` 配置已经使用 Redis 状态缓存与 Streams；Redis 检测观察缓存最多
-5 秒，按订阅隔离，不是跨房间/跨租户的数据库查询缓存。
+5 秒，单订阅按订阅隔离，事件平台按公共房间共享，不是数据库查询缓存。
 状态、场次、通知去重与任务终态始终以数据库为准；运行中 Redis 缓存故障回源，
 Streams 唤醒丢失由 PostgreSQL 扫描恢复。显式选择 Redis 后启动连接失败仍报错，
 不悄悄更换部署模式。
@@ -40,10 +39,10 @@ Redis，要依据重复查询比例、SQL p95 和数据库负载测量，再明�
 Linux Docker Engine + Compose v2，在仓库根目录的 `deploy/cloud` 下选择一种：
 
 ```sh
-./manage.sh light prepare
+./manage.sh sqlite prepare
 # 填 .env，审核 config.yaml 后：
-./manage.sh light check
-./manage.sh light up
+./manage.sh sqlite check
+./manage.sh sqlite up
 ```
 
 或者在新的安装目录选择 PostgreSQL-only：
@@ -55,6 +54,22 @@ Linux Docker Engine + Compose v2，在仓库根目录的 `deploy/cloud` 下选�
 ./manage.sh postgres migrate
 ./manage.sh postgres up
 ```
+
+需要 Redis 时只增加缓存选项，不换一套业务架构：
+
+```sh
+./manage.sh sqlite prepare redis
+# 或者 ./manage.sh postgres prepare redis
+# 填 MONITOR_REDIS_URL、REDIS_PASSWORD 和所选数据库凭证
+./manage.sh sqlite check
+./manage.sh sqlite up
+```
+
+`prepare` 的缓存默认 memory；`up/check` 读取已保存配置自动启用 Redis 部署。
+`light` 是 `sqlite` 的兼容别名，原 `platform` 命令兼容已有 Streams 配置；
+新单订阅部署只需选数据库和缓存，通常使用数据库队列。
+多租户平台的 `CACHE=redis ./manage.sh up` 同时启用 PostgreSQL、Redis 和 Kafka；
+`CACHE=memory ./manage.sh up` 不启用 Redis，清空平台缓存 URL，业务仍直接检测上游。
 
 `prepare` 不覆盖现有配置；改数据库要先停止、备份并迁移状态，不能用 prepare 原地
 切换。`down` 保留卷。不要同时用 systemd 和 Docker 管理同一订阅。

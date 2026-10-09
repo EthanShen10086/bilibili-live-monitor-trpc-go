@@ -1,11 +1,16 @@
 # tRPC-Go 可扩展云端版：配置、部署与复现
 
-本文范围是 `cmd/monitor` 的单订阅云服务，含 SQLite、PostgreSQL-only 和原 Redis
+本文范围是 `cmd/monitor` 的单订阅云服务，数据库选择 SQLite/PostgreSQL，缓存独立
+选择 memory/Redis；原 Redis Streams 配置继续兼容。这些组件不是互斥架构。原 Redis
 兼容模式。多租户 Kafka、OIDC、共享检测和回放已经由 `cmd/event-platform` 实现，
 见 [事件平台部署包](../deploy/event-platform/README.md)。两种入口不要混用配置/迁移命令。
 Mac Node 到云端的正式切换见 [交接手册](STANDALONE_DEPLOYMENT.md)。
 
 ## 1. 部署方式
+
+新部署只需 `manage.sh sqlite|postgres prepare [memory|redis]`。不传缓存选项默认
+memory；后续 `up/check` 自动读取配置并组合服务。Kafka 属于事件平台入口，其
+PostgreSQL、Redis、Kafka 可以同时启用。下面的 light/platform 名称仅为已有部署别名。
 
 - 本地轻量：默认 config.yaml，SQLite + 进程内队列统计缓存，role=both。不连接 PostgreSQL / Redis，不启动额外服务。Node 和独立原生 Go 的本地代码不受本扩展影响。
 - 云端轻量：deploy/cloud/config.light.yaml，Linux 后台运行相同 SQLite 逻辑，Nginx 可选。

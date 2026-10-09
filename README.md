@@ -2,7 +2,7 @@
 
 本仓库独立管理 tRPC-Go 服务，有自己的 Go 模块、测试、CI、部署脚本和运行状态。云端直接部署本仓库的确定 main 提交，无需 clone Node 或其他 Go 仓库，也不依赖 Mac 路径。
 
-云端支持单订阅 **SQLite** 与 **PostgreSQL-only** 两种持久化方式；完整 Kafka 多租户平台使用独立入口和 PostgreSQL。先验收云端，再停用 Mac Node 自动启动、迁移场次/队列并启用唯一云端发送端。见 [独立部署与交接手册](docs/STANDALONE_DEPLOYMENT.md)。
+云端按能力组合：单订阅数据库选 **SQLite 或 PostgreSQL**，两者均可选择内存缓存或 Redis；多租户事件平台采用 **PostgreSQL + Kafka + 可选 Redis**。Redis 缓存与数据库、Kafka 不互斥。先验收云端，再停用 Mac Node 自动启动、迁移场次/队列并启用唯一云端发送端。见 [独立部署与交接手册](docs/STANDALONE_DEPLOYMENT.md)。
 
 默认房间 1616，北京时间周三、周五、周六、周日 18:00–24:00 每约 1 分钟轮询，飞书签名群提醒，每场去重，不设每周通知次数上限。支持配置切换官方授权事件、飞书应用私聊、本机和 Linux 云端。
 

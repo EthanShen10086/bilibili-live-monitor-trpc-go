@@ -44,3 +44,5 @@ platform:
   cache: memory
   queue: database
   role: both
+  redis:
+    url_env: MONITOR_REDIS_URL

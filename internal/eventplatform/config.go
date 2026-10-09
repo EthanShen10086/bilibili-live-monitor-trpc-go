@@ -16,6 +16,7 @@ import (
 
 type Config struct {
 	DSN              string
+	RedisURL         string
 	Issuer           string
 	Audience         string
 	AdminSubjects    []string
@@ -31,6 +32,13 @@ func LoadConfig() (Config, error) {
 	c := Config{DSN: os.Getenv("EVENT_POSTGRES_DSN"), Issuer: os.Getenv("EVENT_OIDC_ISSUER"), Audience: os.Getenv("EVENT_OIDC_AUDIENCE"), AdminSubjects: split(os.Getenv("EVENT_ADMIN_SUBJECTS")), SMTPHosts: split(os.Getenv("EVENT_SMTP_ALLOWED_HOSTS")), RetentionDays: 90, TraceSampleRatio: .1, Tracing: os.Getenv("EVENT_TRACING") == "true"}
 	if c.DSN == "" {
 		return c, errors.New("EVENT_POSTGRES_DSN required")
+	}
+	c.RedisURL = os.Getenv("EVENT_REDIS_URL")
+	if c.RedisURL != "" {
+		u, err := url.Parse(c.RedisURL)
+		if err != nil || (u.Scheme != "redis" && u.Scheme != "rediss") || u.Host == "" {
+			return c, errors.New("invalid EVENT_REDIS_URL")
+		}
 	}
 	keys := map[string]string{}
 	if e := json.Unmarshal([]byte(os.Getenv("EVENT_CREDENTIAL_KEYS")), &keys); e != nil {

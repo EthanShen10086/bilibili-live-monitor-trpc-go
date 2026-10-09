@@ -57,7 +57,7 @@ services:
     mem_limit: 512m
     logging: *bounded-logs
   redis:
-    profiles: [platform]
+    profiles: [platform, cache]
     image: redis:7.4.6-alpine
     restart: unless-stopped
     environment:
