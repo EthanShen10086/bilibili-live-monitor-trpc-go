@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,9 +37,12 @@ func Atomic(file string, b []byte) error {
 	return nil
 }
 func Event(root, name string, data any) {
+	slog.Info(name, "details", data)
 	file := filepath.Join(root, "var/events.log")
 	b, _ := json.Marshal(map[string]any{"time": time.Now().UTC().Format(time.RFC3339Nano), "event": name, "details": data})
-	AppendBoundedLog(file, append(b, '\n'))
+	if err := AppendBoundedLog(file, append(b, '\n')); err != nil {
+		slog.Error("event_log_failed", "error", err.Error())
+	}
 }
 
 // Same directory-lock path/heartbeat timing as Node proper-lockfile.

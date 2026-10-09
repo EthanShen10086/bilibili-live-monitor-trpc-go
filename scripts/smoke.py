@@ -51,7 +51,8 @@ for binary in ('monitor',):
                     with urllib.request.urlopen(f'http://127.0.0.1:{ports[1]}/status', timeout=5) as response:
                         assert json.load(response)['detector_state'] == 'outside_window'
                 second = subprocess.run([str(go / 'dist/monitor'), '--root', str(root), 'run', '--managed', 'cloud'], capture_output=True, timeout=5)
-                assert second.returncode != 0 and b'ELOCKED' in (root / 'var/error.log').read_bytes()
+                assert second.returncode != 0 and b'ELOCKED' in second.stderr
+                assert b'"command_failed"' in second.stderr
                 p.terminate(); assert p.wait(timeout=40) == 0
                 assert not json.loads((root / 'var/status.json').read_text())['running']
                 assert not (root / 'var/instance.guard.lock').exists()
