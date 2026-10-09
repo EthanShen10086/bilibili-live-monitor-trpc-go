@@ -16,7 +16,7 @@ nginx_config:
   http:
     client_max_body_size: 64k
     access_log: /dev/stdout
-    access_log_format: '{"service":"gateway","gateway":"apisix","request_id":"$request_id","status":$status,"method":"$request_method","duration":$request_time}'
+    access_log_format: '{"service":"gateway","gateway":"apisix","request_id":"$request_id","api_request_id":"$upstream_http_x_request_id","status":$status,"method":"$request_method","duration":$request_time}'
 plugins:
   - forward-auth
   - proxy-rewrite

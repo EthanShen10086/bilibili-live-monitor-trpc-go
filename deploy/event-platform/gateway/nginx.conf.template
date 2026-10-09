@@ -3,7 +3,7 @@ error_log /dev/stderr warn;
 pid /tmp/nginx.pid;
 events { worker_connections 1024; }
 http {
-  log_format platform escape=json '{"service":"gateway","gateway":"nginx","request_id":"$request_id","status":$status,"method":"$request_method","duration":$request_time}';
+  log_format platform escape=json '{"service":"gateway","gateway":"nginx","request_id":"$request_id","api_request_id":"$upstream_http_x_request_id","status":$status,"method":"$request_method","duration":$request_time}';
   access_log /dev/stdout platform;
   client_max_body_size 64k;
   client_body_timeout 12s;

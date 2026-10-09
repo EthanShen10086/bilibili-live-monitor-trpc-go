@@ -64,6 +64,9 @@ def token_for(name):
 admin = wait(lambda: token_for('integration'), 'real Keycloak token')
 outsider = wait(lambda: token_for('outsider'), 'outsider token')
 viewer = wait(lambda: token_for('viewer'), 'viewer token')
+status, device = request('/realms/live/protocol/openid-connect/auth/device', 'POST',
+                         {'client_id': 'live-api', 'scope': 'openid'}, host='auth.localhost', form=True)
+assert status == 200 and all(key in device for key in ('device_code', 'user_code', 'verification_uri', 'interval')), 'CLI device authorization unavailable'
 wait(lambda: request('/api/v1/tenants', token=admin)[0] == 200, 'verified API')
 for path in ('/api/v1/tenants', '/api/v1/tenants?unexpected=1'):
     assert request(path)[0] == 401

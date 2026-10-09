@@ -61,8 +61,8 @@ def main():
              'registrationAllowed': False, 'groups': [{'name': 'operations'}],
              'clients': [
                  {'clientId': 'live-api', 'enabled': True, 'publicClient': True,
-                  'standardFlowEnabled': True, 'directAccessGrantsEnabled': False,
-                  'redirectUris': [f"https://{hosts['API_HOST']}/oidc/callback"],
+                  'standardFlowEnabled': False, 'directAccessGrantsEnabled': False,
+                  'attributes': {'oauth2.device.authorization.grant.enabled': 'true'},
                   'protocolMappers': [{'name': 'api-audience', 'protocol': 'openid-connect',
                                       'protocolMapper': 'oidc-audience-mapper',
                                       'config': {'included.client.audience': 'live-api', 'access.token.claim': 'true'}}]},

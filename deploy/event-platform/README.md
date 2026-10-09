@@ -23,6 +23,24 @@ Both entries share `gateway/policy.json`: Bearer auth, 64KiB bodies, IP limits,
 removed client identity headers. The API independently validates JWTs and membership.
 Keycloak/Grafana cookies do not authorize management API requests.
 
+The `live-api` public client uses Keycloak device authorization for CLI users.
+POST form fields `client_id=live-api&scope=openid` to the issuer's
+`/protocol/openid-connect/auth/device` endpoint. Open the returned verification URI,
+sign in and approve the displayed user code. Poll `/protocol/openid-connect/token`
+with `grant_type=urn:ietf:params:oauth:grant-type:device_code`, `client_id=live-api`
+and the returned `device_code`, respecting `interval`, `slow_down` and expiry.
+Use the resulting access token as Bearer; keep tokens out of command history/logs.
+See [Keycloak device authorization](https://www.keycloak.org/docs/latest/server_admin/#_oidc-auth-flows).
+Provision users privately and add their `sub` through tenant membership APIs.
+Unattended integrations should have separately provisioned confidential service
+accounts; no default production service-account credentials are shipped.
+
+Statistics report the observed start/end span, rather than an exact upstream live
+duration. List queries and projection replay are bounded; one replay handles up to
+10,000 events and reports `range_too_large` for larger ranges. Split the requested
+time range when that occurs. Shared polling currently groups identical configured
+room IDs; configure one canonical ID consistently when subscriptions share a room.
+
 SMTP adapters require STARTTLS and an administrator-maintained hostname allowlist;
 port 465 implicit TLS is not configured. SMTP DATA acceptance and Feishu API acceptance
 are durable outcomes; recipient inbox/user delivery requires separate acceptance.
