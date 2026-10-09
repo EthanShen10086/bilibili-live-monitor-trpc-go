@@ -34,3 +34,5 @@ Go 1.26.9 或兼容更高版本。编译后只需 dist/monitor、config.yaml、.
 可选云端平台扩展已实现：PostgreSQL、Redis 缓存、Redis Streams 唤醒、调度与任务租约，以及 Linux Docker Compose / 可选 Nginx HTTPS。默认仍为本机 SQLite，不依赖外部服务。详见 [平台部署与迁移手册](docs/CLOUD_PLATFORM.md)。
 
 上线前改造、组件选型、健康探针、Prometheus/OTLP、备份恢复与验收：[生产就绪手册](docs/PRODUCTION_READINESS.md)。
+
+多人开发入口：[协作、代码风格、测试和 Git 门禁](CONTRIBUTING.md)。首次运行 `make tools && make hooks`，提交前检查 `make verify`。

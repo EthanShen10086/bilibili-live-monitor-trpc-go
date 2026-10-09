@@ -59,3 +59,15 @@ Node 各副本 48 项通过、1 项真实平台测试跳过；Go 34 项、tRPC-G
 新增 CI coverage artifact、非 root/只读容器运行与健康检查、Prometheus 配置检查。本机无 Docker，本次没有运行新容器 smoke 或 promtool；新分支尚未推送，因此不能沿用上面的历史 CI 成功作为新改造的验收。
 
 正式服务器部署、自启动与崩溃恢复、真实告警收件人、生产备份演练、飞书群可见性/手机提醒和官方资质仍需对应资源上的独立验收。运行/组件与恢复说明见 [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)。
+
+## 2026-10-09 开发规范与协作门禁
+
+已对照 CloudOP backend 的本地 Makefile、CI 和 AGENTS 约定，以及 Google Go 风格原则；完成纯格式单独提交、严格错误/资源处理修复、固定版本开发工具、单元/集成分层、Git source snapshot hooks、PR 模板、CODEOWNERS 与贡献约定。
+
+- 固定 golangci-lint v2.14.0 全仓检查（含 integration tag）为 0 issues；gofumpt/goimports 与本地/CI 共享 quality.py。make verify、真实隔离 PostgreSQL/Redis 测试和实际进程 smoke 通过。
+- 新增不合法窗口/损坏启动批准必须关闭的行为测试，以及清理日志不泄露凭证、已结束事务不产生误告警测试；质量脚本 4 项回归覆盖部分暂存、提交快照、消息格式与既有 hooks 保护。
+- 项目 hooks 已安装，并保留全局 core.hooksPath。故意构造的格式错误暂存快照会被拒绝，真实 index 与工作区不变。实际 git commit 已运行格式/lint/race/manifest 门禁。
+- 实际 hook 验证曾发现测试子进程继承 Git 变量，影响暂存区和本地配置；已通过 reflog 恢复功能分支、暂存区、正常身份与全局 hooks，隔离所有 repository-local Git 环境变量并加入回归断言。源码与常驻服务未受影响。
+- GitHub main 原无保护；已核实 check 名称 go/platform 并通过 API 启用 PR、至少一次审批、codeowner review、过期审批失效、最后推送审批、同步最新主分支、解决讨论、禁止强推/删除。管理员保留应急权限。新 CI/CODEOWNERS 内容仍需功能分支合入 main；不把 settings 写入成功当作新分支 CI 通过。
+
+本轮没有实际 push、部署或真实通知发送；开发门禁不替代正式云端的部署恢复和真实交付验收。
