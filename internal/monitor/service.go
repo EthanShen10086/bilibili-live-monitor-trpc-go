@@ -10,6 +10,11 @@ import (
 )
 
 type Status struct {
+	Storage               string `json:"storage"`
+	WorkerRole            string `json:"worker_role"`
+	QueueMode             string `json:"queue_mode"`
+	Leadership            bool   `json:"leadership"`
+	QueueError            string `json:"queue_error,omitempty"`
 	ResourceSafetyVersion int    `json:"resource_safety_version"`
 	RetentionDays         int    `json:"history_retention_days"`
 	AdaptiveVersion       int    `json:"adaptive_polling_version"`
@@ -47,6 +52,9 @@ func ReadStatus(root string) (Status, error) {
 	return s, e
 }
 func Run(ctx context.Context, root string, c Config, h *HTTP) error {
+	if e := c.Platform.Validate(c); e != nil {
+		return e
+	}
 	if e := c.Credentials(); e != nil {
 		return e
 	}
@@ -55,14 +63,25 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 		return e
 	}
 	defer release()
-	db, e := OpenStore(filepath.Join(root, "var/state.sqlite"))
+	db, e := OpenRepository(ctx, root, c)
 	if e != nil {
 		return e
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	host, _ := os.Hostname()
 	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: time.Now().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
 
+	s.Storage, s.WorkerRole, s.QueueMode = c.Platform.StorageMode(), c.Platform.WorkerRole(), c.Platform.QueueMode()
+	pg, distributed := db.(*PostgresStore)
+	var streams TaskQueue
+	if c.Platform.QueueMode() == "redis_streams" {
+		streams, e = OpenStreamQueue(c, pg)
+		if e != nil {
+			return e
+		}
+		defer streams.Close()
+	}
+	var nextStream time.Time
 	s.ResourceSafetyVersion = 1
 	s.RetentionDays = c.HistoryRetentionDays()
 	nextCleanup, e := db.NextCleanupAt(c.HistoryRetentionDays(), time.Now())
@@ -130,7 +149,14 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 	defer cleanup()
 	for ctx.Err() == nil {
 		now := time.Now()
-		window := c.InWindow(now)
+		window := c.InWindow(now) && c.Platform.WorkerRole() != "sender"
+		if distributed && c.Platform.WorkerRole() != "sender" {
+			s.Leadership, e = pg.Leadership()
+			if e != nil {
+				return fmt.Errorf("PostgreSQL scheduling unavailable")
+			}
+			window = window && s.Leadership
+		}
 		s.InWindow = window
 		if !window {
 			if e = cleanup(); e != nil {
@@ -143,6 +169,12 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				continue
 			}
 			s.State = "outside_window"
+			if distributed && !s.Leadership && c.Platform.WorkerRole() != "sender" {
+				s.State = "standby"
+			}
+			if c.Platform.WorkerRole() == "sender" {
+				s.State = "healthy"
+			}
 			s.PollingPhase = "outside_window"
 			wasWindow = false
 			catchup = true
@@ -298,7 +330,23 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 			return e
 		}
 		var job *Job
-		if !queue.NextDue.IsZero() && !time.Now().Before(queue.NextDue) {
+		messageID := ""
+		if streams != nil && !time.Now().Before(nextStream) {
+			nextStream = time.Now().Add(5 * time.Second)
+			err := streams.Publish(ctx)
+			if err == nil && c.Platform.WorkerRole() != "detector" {
+				job, messageID, err = streams.Receive(ctx)
+			}
+			if err != nil {
+				s.QueueError = "Redis queue unavailable; durable database recovery active"
+			} else {
+				s.QueueError = ""
+			}
+			if job != nil {
+				queue.Dirty = true
+			}
+		}
+		if job == nil && c.Platform.WorkerRole() != "detector" && !queue.NextDue.IsZero() && !time.Now().Before(queue.NextDue) {
 			job, e = db.Due(time.Now())
 			if e != nil {
 				return e
@@ -310,7 +358,14 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 			if json.Unmarshal([]byte(job.Payload), &n) != nil {
 				return fmt.Errorf("invalid durable notification payload")
 			}
-			err := notify.Send(ctx, FormatNotice(n, c.Subscription.RoomID), job.Key)
+			// Task lease is 60 seconds; bound the entire token-refresh + send sequence to 40 seconds.
+			sendCtx, cancelSend := context.WithTimeout(ctx, 40*time.Second)
+			sendKey := job.Key
+			if distributed {
+				sendKey = pg.Scope + ":" + job.Key
+			}
+			err := notify.Send(sendCtx, FormatNotice(n, c.Subscription.RoomID), sendKey)
+			cancelSend()
 			if err == nil {
 				if e = db.Sent(job.Key); e != nil {
 					return e
@@ -331,6 +386,11 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 				Event(root, "notification_error", err.Error())
 			}
 		}
+		if messageID != "" && streams != nil {
+			if err := streams.Ack(ctx, messageID); err != nil {
+				s.QueueError = "Redis acknowledgement unavailable; task state is durable"
+			}
+		}
 		s.NextPoll = 0
 		if !next.IsZero() {
 			s.NextPoll = next.UnixMilli()
@@ -343,7 +403,11 @@ func Run(ctx context.Context, root string, c Config, h *HTTP) error {
 		}
 		after := time.Now()
 		boundary := after.Truncate(time.Minute).Add(time.Minute)
-		deadline := Earliest(writer.LastWrite.Add(WorkerHeartbeat), queue.NextCheck, queue.NextDue, nextCleanup, boundary)
+		queueDeadline := queue.NextDue
+		if c.Platform.WorkerRole() == "detector" {
+			queueDeadline = time.Time{}
+		}
+		deadline := Earliest(writer.LastWrite.Add(WorkerHeartbeat), queue.NextCheck, queueDeadline, nextCleanup, boundary, nextStream)
 		if window && !blocked && (c.Detector.Mode == "polling" || official == nil) {
 			deadline = Earliest(deadline, next)
 		}

@@ -19,12 +19,22 @@ import (
 
 const ServiceName = "trpc.live.monitor.Status"
 
-func Handler(root string) http.Handler {
+func Handler(root string) http.Handler { return HandlerWithCache(root, nil) }
+func HandlerWithCache(root string, cache monitor.Cache) http.Handler {
+	cacheKey := "status:" + monitor.ID()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			w.WriteHeader(405)
 			return
+		}
+		if cache != nil {
+			if b, ok := cache.Get(r.Context(), cacheKey); ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				w.Write(b)
+				return
+			}
 		}
 		s, e := monitor.ReadStatus(root)
 		if e != nil {
@@ -32,7 +42,12 @@ func Handler(root string) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(s)
+		b, _ := json.Marshal(s)
+		if cache != nil {
+			cache.Put(r.Context(), cacheKey, b, 2*time.Second)
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(b)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
@@ -40,7 +55,7 @@ func Handler(root string) http.Handler {
 			return
 		}
 		s, e := monitor.ReadStatus(root)
-		if e != nil || !s.Running || time.Now().UnixMilli()-s.Updated > 20000 || (s.State != "healthy" && s.State != "outside_window") {
+		if e != nil || !s.Running || time.Now().UnixMilli()-s.Updated > 20000 || (s.State != "healthy" && s.State != "outside_window" && s.State != "standby") {
 			http.Error(w, "worker unhealthy", 503)
 			return
 		}
@@ -88,7 +103,15 @@ func Run(ctx context.Context, o monitor.Options) error {
 		return e
 	}
 	server := trpc.NewServerWithConfig(cfg)
-	thttp.RegisterNoProtocolServiceMux(server.Service(ServiceName), Handler(o.Root))
+	var cache monitor.Cache
+	if c.Platform.CacheMode() == "redis" {
+		cache, e = monitor.OpenCache(c)
+		if e != nil {
+			return e
+		}
+		defer cache.Close()
+	}
+	thttp.RegisterNoProtocolServiceMux(server.Service(ServiceName), HandlerWithCache(o.Root, cache))
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	workerDone := make(chan error, 1)

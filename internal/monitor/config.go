@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	Platform    PlatformConfig `yaml:"platform"`
 	Maintenance struct {
 		RetentionDays *int `yaml:"history_retention_days,omitempty"`
 	} `yaml:"maintenance"`
@@ -132,6 +133,9 @@ func minutes(s string) (int, error) {
 	return h*60 + m, nil
 }
 func (c Config) Validate() error {
+	if err := c.Platform.Validate(c); err != nil {
+		return err
+	}
 	if days := c.HistoryRetentionDays(); days < 0 || days > 3650 {
 		return fmt.Errorf("history_retention_days must be 0..3650")
 	}
@@ -188,6 +192,12 @@ func (c Config) Validate() error {
 }
 func (c Config) Credentials() error {
 	names := []string{}
+	if c.Platform.StorageMode() == "postgres" {
+		names = append(names, c.Platform.Postgres.DSNEnv)
+	}
+	if c.Platform.Cache == "redis" || c.Platform.Queue == "redis_streams" {
+		names = append(names, c.Platform.Redis.URLEnv)
+	}
 	if c.Notification.Mode == "feishu_group" {
 		names = append(names, c.Notification.Group.Webhook, c.Notification.Group.Secret)
 	} else {

@@ -37,3 +37,10 @@ deployment:
 
 maintenance:
   history_retention_days: 90  # 每天最多清理 200 条旧终态任务；保留当前场次和待发送任务，0 为关闭
+
+# Lightweight by default: no external connections or background services.
+platform:
+  storage: sqlite
+  cache: memory
+  queue: database
+  role: both

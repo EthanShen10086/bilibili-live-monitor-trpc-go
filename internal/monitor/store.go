@@ -246,3 +246,5 @@ func (s *Store) CleanupHistory(days int, now time.Time) (int64, error) {
 	}
 	return n, tx.Commit()
 }
+
+func (s *Store) Close() error { return s.DB.Close() }

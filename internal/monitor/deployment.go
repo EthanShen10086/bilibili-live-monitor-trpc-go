@@ -84,7 +84,7 @@ func Health(ctx context.Context, root, side string) error {
 	}
 	s, e := ReadStatus(root)
 	host, _ := os.Hostname()
-	if e != nil || !s.Running || s.Host != host || time.Now().UnixMilli()-s.Updated > 20000 || (s.State != "healthy" && s.State != "outside_window") {
+	if e != nil || !s.Running || s.Host != host || time.Now().UnixMilli()-s.Updated > 20000 || (s.State != "healthy" && s.State != "outside_window" && s.State != "standby") {
 		return fmt.Errorf("managed worker is not healthy")
 	}
 	release, e := Lock(root, "instance")
@@ -379,6 +379,9 @@ func Switch(from, to string, o SwitchOps) error {
 	return nil
 }
 func DeploySwitch(ctx context.Context, root string, c Config, to string) error {
+	if c.Platform.StorageMode() != "sqlite" {
+		return fmt.Errorf("shared PostgreSQL mode uses independent deployment; SQLite file switching is disabled")
+	}
 	if to != "local" && to != "cloud" {
 		return fmt.Errorf("invalid destination")
 	}

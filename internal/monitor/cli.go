@@ -87,7 +87,7 @@ func CLI(ctx context.Context, o Options) error {
 		cmd = o.Args[0]
 	}
 	if cmd == "help" {
-		fmt.Println("monitor check-config [--probe] [--official-auth]\nmonitor probe\nmonitor run\nmonitor status\nmonitor test-notification\nmonitor retry-failed\nmonitor confirm-start\nmonitor service install|start|stop|health|doctor|verify-recovery --side local|cloud\nmonitor switch local|cloud\nmonitor set-active local|cloud (initial setup only)")
+		fmt.Println("monitor check-config [--probe] [--official-auth]\nmonitor platform-import-sqlite SOURCE_ROOT (stopped source, empty target)\nmonitor platform-check (connect selected backends; no messages)\nmonitor probe\nmonitor run\nmonitor status\nmonitor test-notification\nmonitor retry-failed\nmonitor confirm-start\nmonitor service install|start|stop|health|doctor|verify-recovery --side local|cloud\nmonitor switch local|cloud\nmonitor set-active local|cloud (initial setup only)")
 		return nil
 	}
 	c, e := Load(o.Root)
@@ -105,6 +105,50 @@ func CLI(ctx context.Context, o Options) error {
 		return ""
 	}
 	switch cmd {
+	case "platform-import-sqlite":
+		if c.Platform.StorageMode() != "postgres" || len(o.Args) != 2 {
+			return fmt.Errorf("usage: platform-import-sqlite /absolute/stopped/source-root (PostgreSQL mode)")
+		}
+		if e = AssertStopped(o.Root); e != nil {
+			return e
+		}
+		if e = c.Credentials(); e != nil {
+			return e
+		}
+		db, err := OpenPostgres(ctx, c)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		n, err := db.ImportSQLite(ctx, o.Args[1], c)
+		if err != nil {
+			return err
+		}
+		return Print(map[string]any{"imported_jobs": n, "notification_sent": false})
+	case "platform-check":
+		if e = c.Credentials(); e != nil {
+			return e
+		}
+		db, err := OpenRepository(ctx, o.Root, c)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if c.Platform.CacheMode() == "redis" {
+			cache, err := OpenCache(c)
+			if err != nil {
+				return err
+			}
+			cache.Close()
+		}
+		if c.Platform.QueueMode() == "redis_streams" {
+			q, err := OpenStreamQueue(c, db.(*PostgresStore))
+			if err != nil {
+				return err
+			}
+			q.Close()
+		}
+		return Print(map[string]any{"ready": true, "storage": c.Platform.StorageMode(), "queue": c.Platform.QueueMode(), "cache": c.Platform.CacheMode(), "role": c.Platform.WorkerRole(), "notification_sent": false})
 	case "run":
 		c, e = PrepareRun(ctx, o)
 		if e != nil {
@@ -190,11 +234,11 @@ func CLI(ctx context.Context, o Options) error {
 			return e
 		}
 		defer release()
-		db, e := OpenStore(filepath.Join(o.Root, "var/state.sqlite"))
+		db, e := OpenRepository(ctx, o.Root, c)
 		if e != nil {
 			return e
 		}
-		defer db.DB.Close()
+		defer db.Close()
 		n, e := db.Retry(time.Now())
 		if e != nil {
 			return e

@@ -35,7 +35,7 @@ func (w *StatusWriter) Report(s *Status, now time.Time, force bool) error {
 }
 
 type QueueSchedule struct {
-	Store              *Store
+	Store              Repository
 	Dirty              bool
 	NextCheck, NextDue time.Time
 	Counts             map[string]int
