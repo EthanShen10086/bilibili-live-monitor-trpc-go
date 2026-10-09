@@ -30,6 +30,8 @@ jobs:
           docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile nginx --profile observability up -d nginx
       - name: Same Nginx contract suite
         run: python3 tests/event-platform/contracts.py nginx
+      - name: Actual telemetry delivery
+        run: python3 tests/event-platform/telemetry.py
       - name: Failure evidence
         if: failure()
         working-directory: deploy/event-platform

@@ -29,3 +29,11 @@ services:
   alertmanager:
     volumes:
       - ./generated/alertmanager-test.yaml:/etc/alertmanager/config.yaml:ro
+  detector:
+    environment: {EVENT_TRACE_SAMPLE_RATIO: '1'}
+  router:
+    environment: {EVENT_TRACE_SAMPLE_RATIO: '1'}
+  analytics:
+    environment: {EVENT_TRACE_SAMPLE_RATIO: '1'}
+  relay:
+    environment: {EVENT_TRACE_SAMPLE_RATIO: '1'}
