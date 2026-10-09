@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -63,7 +65,7 @@ func Run(ctx context.Context, c Config, role, configPath string) error {
 		if e != nil {
 			return e
 		}
-		handler := &api.Server{Control: control, Notifications: notifications, Projections: projections, Verify: verify, RetentionDays: c.RetentionDays, Metrics: telemetry.Handler()}
+		handler := &api.Server{Control: control, Notifications: notifications, Projections: projections, Verify: verify, RetentionDays: c.RetentionDays, Metrics: telemetry.Handler(), Observer: telemetry}
 		return serve(ctx, configPath, handler.Handler())
 	}
 	return runWorker(ctx, configPath, db, telemetry, events, notifications, c.RetentionDays, func(ctx context.Context) error {
@@ -201,8 +203,12 @@ func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observ
 		w.WriteHeader(http.StatusOK)
 	})
 	nextCleanup := time.Now()
+	listener, e := workerListener(ctx, path)
+	if e != nil {
+		return e
+	}
 	done := make(chan error, 3)
-	go func() { done <- serve(ctx, path, mux) }()
+	go func() { done <- serveWorkerHealth(ctx, listener, mux) }()
 	go func() { done <- worker(ctx) }()
 	go func() {
 		done <- tick(ctx, 15*time.Second, func(ctx context.Context) error {
@@ -229,7 +235,7 @@ func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observ
 			return nil
 		})
 	}()
-	e := <-done
+	e = <-done
 	cancel()
 	for range 2 {
 		if err := <-done; e == nil {
@@ -237,6 +243,48 @@ func runWorker(ctx context.Context, path string, db *store.DB, telemetry *observ
 		}
 	}
 	return e
+}
+
+// Bind before starting business workers: an immediate dependency failure must
+// still be able to close the health listener and let the supervisor restart us.
+func workerListener(ctx context.Context, path string) (net.Listener, error) {
+	cfg, err := trpc.LoadConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, service := range cfg.Server.Service {
+		if service.Name == "trpc.live.platform.API" {
+			address := service.Address
+			if address == "" {
+				address = net.JoinHostPort(service.IP, strconv.Itoa(int(service.Port)))
+			}
+			return (&net.ListenConfig{}).Listen(ctx, "tcp", address)
+		}
+	}
+	return nil, errors.New("platform health service missing")
+}
+
+func serveWorkerHealth(ctx context.Context, listener net.Listener, handler http.Handler) error {
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		resource.LogError("platform_health_shutdown", server.Shutdown(shutdownCtx))
+		resource.LogError("platform_health_close", server.Close())
+		// Shutdown can happen before Serve registers the listener.
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			resource.LogError("platform_health_listener", err)
+		}
+		if err := <-done; !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+			return err
+		}
+		return nil
+	}
 }
 
 func tick(ctx context.Context, interval time.Duration, fn func(context.Context) error) error {

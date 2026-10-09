@@ -4,6 +4,7 @@ package eventplatform
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -58,7 +59,7 @@ func LoadConfig() (Config, error) {
 	}
 	if value := os.Getenv("EVENT_TRACE_SAMPLE_RATIO"); value != "" {
 		c.TraceSampleRatio, e = strconv.ParseFloat(value, 64)
-		if e != nil || c.TraceSampleRatio < 0 || c.TraceSampleRatio > 1 {
+		if e != nil || c.TraceSampleRatio < 0 || c.TraceSampleRatio > 1 || math.IsNaN(c.TraceSampleRatio) {
 			return c, errors.New("invalid trace sample ratio")
 		}
 	}

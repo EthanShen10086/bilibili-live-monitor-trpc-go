@@ -27,6 +27,7 @@ type Server struct {
 	Verify        identity.Verifier
 	RetentionDays int
 	Metrics       http.Handler
+	Observer      monitor.Observer
 }
 type endpoint func(context.Context, domain.Principal, *http.Request) (any, error)
 
@@ -61,6 +62,17 @@ func (s *Server) protected(fn endpoint) http.HandlerFunc {
 		defer span.End()
 		started := time.Now()
 		status := http.StatusUnauthorized
+		if s.Observer != nil {
+			var end func(error)
+			ctx, end = s.Observer.Begin(ctx, "api")
+			defer func() {
+				var err error
+				if status >= 400 {
+					err = errors.New("request rejected")
+				}
+				end(err)
+			}()
+		}
 		defer func() {
 			sc := span.SpanContext()
 			slog.InfoContext(ctx, "api_request", "request_id", id, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String(), "route", r.Pattern, "method", r.Method, "status", status, "duration_ms", time.Since(started).Milliseconds())
