@@ -12,6 +12,7 @@ deploy = root / 'deploy/event-platform'
 generated = deploy / 'generated'
 certs = generated / 'certs'
 certs.mkdir(parents=True, mode=0o700, exist_ok=True)
+generated.chmod(0o700)
 subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',
                 '-keyout', str(certs / 'tls.key'), '-out', str(certs / 'tls.crt'), '-subj', '/CN=api.localhost',
                 '-addext', 'subjectAltName=DNS:api.localhost,DNS:auth.localhost,DNS:grafana.localhost,DNS:mailpit,DNS:open.feishu.cn,DNS:api.live.bilibili.com,IP:127.0.0.1',

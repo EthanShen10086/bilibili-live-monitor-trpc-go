@@ -42,7 +42,7 @@ jobs:
         working-directory: deploy/event-platform
         run: |
           docker compose --profile apisix --profile nginx --profile observability ps
-          docker compose --profile apisix --profile nginx --profile observability logs --tail=100
+          docker compose -f compose.yaml -f ../../tests/event-platform/compose.yaml --profile apisix --profile nginx --profile observability logs --tail=100
       - name: Cleanup disposable volumes
         if: always()
         working-directory: deploy/event-platform

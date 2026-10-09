@@ -35,8 +35,7 @@ Use the Docker `json-file` driver; rootless/alternative logging needs an adjuste
 Service/role/level are labels; room, tenant, event, task and trace IDs stay in log bodies.
 
 Default retention: broker 7 days, domain data 90 days, Loki 14 days, Tempo 7 days,
-Prometheus 30 days. Kafka/Prometheus retention is set in deployment variables; Loki
-and Tempo retention must be edited in their reviewed configuration before applying.
+Prometheus 30 days. Kafka, Prometheus, Loki and Tempo retention is set in deployment variables.
 Never prune active session deduplication or unpublished events to satisfy retention.
 
 Persisted volumes are separate for business PostgreSQL, Keycloak PostgreSQL, Kafka,
@@ -47,3 +46,7 @@ recovery still require a disposable-environment drill before production deployme
 
 Use a release revision matching an exact main SHA, not a moving feature branch.
 A server deployment, real notification and production restoration are separate gates.
+
+Rendered gateway/realm files are readable by their container workers; the host generated
+directory is forced to mode 0700. Mount only each required file into its service. Do not
+make the generated directory publicly readable or include it in a web root or archive.

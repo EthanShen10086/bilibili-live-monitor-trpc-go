@@ -19,6 +19,7 @@ def main():
             raise SystemExit('Hosts must be DNS names without ports or paths; TLS entry uses port 443')
     out = ROOT / 'generated'
     out.mkdir(mode=0o700, exist_ok=True)
+    out.chmod(0o700)
     cert = args.cert_dir.joinpath('tls.crt').read_text()
     key = args.cert_dir.joinpath('tls.key').read_text()
     policy = json.loads((ROOT / 'gateway/policy.json').read_text())
@@ -75,7 +76,7 @@ def main():
     (out / 'realm.json').write_text(json.dumps(realm, indent=2))
     for path in out.iterdir():
         if path.is_file():
-            path.chmod(0o644 if path.name in ("realm.json", "nginx.conf") else 0o600)
+            path.chmod(0o644 if path.name in ("realm.json", "nginx.conf", "apisix.yaml") else 0o600)
     print('Rendered gateway and Keycloak files; no services started.')
 
 if __name__ == '__main__':
