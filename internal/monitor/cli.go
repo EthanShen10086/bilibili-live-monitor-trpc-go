@@ -50,6 +50,7 @@ func ParseOptions(args []string) (Options, error) {
 	o.Root, _ = filepath.Abs(o.Root)
 	return o, nil
 }
+
 func Print(v any) error {
 	b, e := json.MarshalIndent(v, "", "  ")
 	if e != nil {
@@ -58,6 +59,7 @@ func Print(v any) error {
 	fmt.Println(string(b))
 	return nil
 }
+
 func PrepareRun(ctx context.Context, o Options) (Config, error) {
 	c, e := Load(o.Root)
 	if e != nil {
@@ -81,6 +83,7 @@ func PrepareRun(ctx context.Context, o Options) (Config, error) {
 	}
 	return c, e
 }
+
 func CLI(ctx context.Context, o Options) error {
 	cmd := "help"
 	if len(o.Args) > 0 {
@@ -94,7 +97,7 @@ func CLI(ctx context.Context, o Options) error {
 	if e != nil {
 		return e
 	}
-	if e = os.MkdirAll(filepath.Join(o.Root, "var"), 0700); e != nil {
+	if e = os.MkdirAll(filepath.Join(o.Root, "var"), 0o700); e != nil {
 		return e
 	}
 	h := NewHTTP()

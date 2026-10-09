@@ -37,6 +37,7 @@ func (c *MemoryCache) Get(_ context.Context, k string) ([]byte, bool) {
 	}
 	return append([]byte(nil), e.data...), true
 }
+
 func (c *MemoryCache) Put(_ context.Context, k string, b []byte, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -76,6 +77,7 @@ func redisClient(c Config) (*redis.Client, error) {
 	}
 	return client, nil
 }
+
 func OpenCache(c Config) (Cache, error) {
 	if c.Platform.CacheMode() == "memory" {
 		return NewMemoryCache(), nil
@@ -86,6 +88,7 @@ func OpenCache(c Config) (Cache, error) {
 	}
 	return &RedisCache{Client: client, Prefix: "live-monitor:" + c.Platform.SubscriptionID + ":cache:"}, nil
 }
+
 func (c *RedisCache) Get(ctx context.Context, k string) ([]byte, bool) {
 	if time.Now().UnixMilli() < c.disabledUntil.Load() {
 		return nil, false
@@ -101,6 +104,7 @@ func (c *RedisCache) Get(ctx context.Context, k string) ([]byte, bool) {
 	}
 	return b, true
 }
+
 func (c *RedisCache) Put(ctx context.Context, k string, b []byte, ttl time.Duration) {
 	if len(b) > 64*1024 || time.Now().UnixMilli() < c.disabledUntil.Load() {
 		return
@@ -134,12 +138,14 @@ func OpenStreamQueue(c Config, s *PostgresStore) (*StreamQueue, error) {
 	}
 	return q, nil
 }
+
 func (q *StreamQueue) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	q.Client.XGroupDelConsumer(ctx, q.Stream, "senders", q.Consumer)
 	return q.Client.Close()
 }
+
 func (q *StreamQueue) Publish(ctx context.Context) error {
 	ctx, cancelPulse := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelPulse()
@@ -199,6 +205,7 @@ func (q *StreamQueue) Receive(ctx context.Context) (*Job, string, error) {
 	}
 	return job, m.ID, nil
 }
+
 func (q *StreamQueue) Ack(ctx context.Context, id string) error {
 	cc, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

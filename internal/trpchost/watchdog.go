@@ -3,8 +3,9 @@ package trpchost
 import (
 	"context"
 	"fmt"
-	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 	"time"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 )
 
 // A business/provider failure stays visible without a restart loop. Only a stale

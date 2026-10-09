@@ -30,6 +30,7 @@ func TestStatusHeartbeatThrottle(t *testing.T) {
 		t.Fatal(w.Writes)
 	}
 }
+
 func TestIdleQueueExternalChangesAndExpiry(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "state.sqlite")
 	db, e := OpenStore(file)
@@ -81,6 +82,7 @@ func TestIdleQueueExternalChangesAndExpiry(t *testing.T) {
 		t.Fatal(q)
 	}
 }
+
 func TestUnchangedObservationDoesNotWrite(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "state.sqlite")
 	db, e := OpenStore(file)
@@ -106,6 +108,7 @@ func TestUnchangedObservationDoesNotWrite(t *testing.T) {
 		t.Fatal("unchanged rows rewritten")
 	}
 }
+
 func TestIdleWorkerStableStatusAndPromptShutdown(t *testing.T) {
 	c := testConfig(t)
 	c.Schedule.Weekdays = []int{}

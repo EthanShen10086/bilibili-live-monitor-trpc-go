@@ -68,15 +68,18 @@ func OpenPostgres(ctx context.Context, c Config) (*PostgresStore, error) {
 	}
 	return s, nil
 }
+
 func (s *PostgresStore) timeout() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(s.ctx, 5*time.Second)
 }
+
 func (s *PostgresStore) Close() error {
 	cc, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	s.DB.ExecContext(cc, "UPDATE lm_scopes SET lease_until=clock_timestamp() WHERE scope=$1 AND owner=$2", s.Scope, s.Owner)
 	return s.DB.Close()
 }
+
 func (s *PostgresStore) Leadership() (bool, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -88,6 +91,7 @@ func (s *PostgresStore) Leadership() (bool, error) {
 	}
 	return err == nil, err
 }
+
 func (s *PostgresStore) guard(ctx context.Context, tx *sql.Tx) error {
 	var owner string
 	err := tx.QueryRowContext(ctx, "SELECT owner FROM lm_scopes WHERE scope=$1 AND lease_until>clock_timestamp() FOR UPDATE", s.Scope).Scan(&owner)
@@ -96,10 +100,12 @@ func (s *PostgresStore) guard(ctx context.Context, tx *sql.Tx) error {
 	}
 	return err
 }
+
 func (s *PostgresStore) bump(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, "UPDATE lm_scopes SET version=version+1 WHERE scope=$1", s.Scope)
 	return err
 }
+
 func (s *PostgresStore) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -166,6 +172,7 @@ func (s *PostgresStore) Observe(o Observation, catchup bool, ttl int) (bool, err
 	}
 	return added, tx.Commit()
 }
+
 func (s *PostgresStore) PollingPhase(room int64) (string, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -230,6 +237,7 @@ func (s *PostgresStore) claim(now time.Time, key string) (*Job, error) {
 	s.mu.Unlock()
 	return &j, nil
 }
+
 func (s *PostgresStore) Complete(key, status, code string, next int64, attempt bool) error {
 	s.mu.Lock()
 	token := s.claims[key]
@@ -278,6 +286,7 @@ func (s *PostgresStore) Failed(j *Job, e error, now time.Time) error {
 	}
 	return s.Complete(j.Key, status, e.Error(), now.Add(RetryDelay(e, j.Attempts+1, 5)).UnixMilli(), true)
 }
+
 func (s *PostgresStore) Retry(now time.Time) (int64, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -301,6 +310,7 @@ func (s *PostgresStore) Retry(now time.Time) (int64, error) {
 	}
 	return n, tx.Commit()
 }
+
 func (s *PostgresStore) DataVersion() (int64, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -308,6 +318,7 @@ func (s *PostgresStore) DataVersion() (int64, error) {
 	e := s.DB.QueryRowContext(cc, "SELECT version FROM lm_scopes WHERE scope=$1", s.Scope).Scan(&v)
 	return v, e
 }
+
 func (s *PostgresStore) Counts() (map[string]int, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -327,6 +338,7 @@ func (s *PostgresStore) Counts() (map[string]int, error) {
 	}
 	return m, rows.Err()
 }
+
 func (s *PostgresStore) NextWake() (time.Time, error) {
 	cc, cancel := s.timeout()
 	defer cancel()
@@ -337,6 +349,7 @@ func (s *PostgresStore) NextWake() (time.Time, error) {
 	}
 	return time.UnixMilli(at.Int64), nil
 }
+
 func (s *PostgresStore) NextCleanupAt(days int, now time.Time) (time.Time, error) {
 	if days == 0 {
 		return time.Time{}, nil
@@ -350,6 +363,7 @@ func (s *PostgresStore) NextCleanupAt(days int, now time.Time) (time.Time, error
 	}
 	return Earliest(now.Add(24*time.Hour), time.UnixMilli(last).Add(24*time.Hour)), e
 }
+
 func (s *PostgresStore) CleanupHistory(days int, now time.Time) (int64, error) {
 	if days == 0 {
 		return 0, nil
@@ -398,6 +412,7 @@ func (s *PostgresStore) Outbox() (map[string]string, error) {
 	}
 	return m, rows.Err()
 }
+
 func (s *PostgresStore) Published(key string) error {
 	cc, cancel := s.timeout()
 	defer cancel()

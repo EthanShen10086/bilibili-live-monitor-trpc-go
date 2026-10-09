@@ -30,6 +30,7 @@ func TestOfficialSigningAndRoom(t *testing.T) {
 		t.Fatal(o, e)
 	}
 }
+
 func TestFramesCompressionAndLimits(t *testing.T) {
 	b := frame(5, []byte(`{"cmd":"test"}`))
 	calls := 0
@@ -64,6 +65,7 @@ func TestFramesCompressionAndLimits(t *testing.T) {
 		t.Fatal("depth")
 	}
 }
+
 func TestSwitchStopsBeforeTransferAndRollback(t *testing.T) {
 	calls := []string{}
 	ops := SwitchOps{Preflight: func(s string) error { calls = append(calls, "pre:"+s); return nil }, Stop: func(s string) error { calls = append(calls, "stop:"+s); return nil }, Assert: func(s string) error { calls = append(calls, "assert:"+s); return nil }, Transfer: func(a, b string) error { calls = append(calls, "transfer:"+a+":"+b); return nil }, Active: func(s string) error { calls = append(calls, "active:"+s); return nil }, Start: func(s string) error { calls = append(calls, "start:"+s); return nil }, Health: func(s string) error { calls = append(calls, "health:"+s); return nil }}
@@ -80,6 +82,7 @@ func TestSwitchStopsBeforeTransferAndRollback(t *testing.T) {
 		t.Fatal("source changed after failed preflight")
 	}
 }
+
 func TestInvalidStateImport(t *testing.T) {
 	if e := Import(t.TempDir(), "bm90IGEgZGF0YWJhc2U="); e == nil {
 		t.Fatal("invalid SQLite imported")
@@ -176,6 +179,7 @@ func TestOfficialReadAuthEventAndReject(t *testing.T) {
 		server.Close()
 	}
 }
+
 func TestOfficialMismatchRetainsSessionUntilCleanup(t *testing.T) {
 	ended := 0
 	h := mockHTTP(func(r *http.Request) (*http.Response, error) {

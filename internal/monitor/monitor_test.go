@@ -28,6 +28,7 @@ func testConfig(t *testing.T) Config {
 	}
 	return c
 }
+
 func store(t *testing.T) *Store {
 	t.Helper()
 	s, e := OpenStore(filepath.Join(t.TempDir(), "state.sqlite"))
@@ -37,6 +38,7 @@ func store(t *testing.T) *Store {
 	t.Cleanup(func() { s.DB.Close() })
 	return s
 }
+
 func TestWindow(t *testing.T) {
 	c := testConfig(t)
 	for _, d := range []string{"2026-09-30", "2026-10-02", "2026-10-03", "2026-10-04"} {
@@ -59,11 +61,13 @@ func TestWindow(t *testing.T) {
 		t.Fatal("invalid zone accepted")
 	}
 }
+
 func TestBackoff(t *testing.T) {
 	if Backoff(1, 10) != 10*time.Second || Backoff(20, 10) != 300*time.Second {
 		t.Fatal("backoff")
 	}
 }
+
 func TestParseRoom(t *testing.T) {
 	b := []byte(`{"code":0,"data":{"room_id":11163068,"short_id":1616,"live_status":2,"title":"rotation","live_time":"0000-00-00 00:00:00"}}`)
 	o, e := ParseRoom(b, 1616, time.Now())
@@ -83,6 +87,7 @@ func TestParseRoom(t *testing.T) {
 		t.Fatal("timezone")
 	}
 }
+
 func TestDedupePersistenceLateTimestampAndNext(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "state.sqlite")
@@ -126,6 +131,7 @@ func TestDedupePersistenceLateTimestampAndNext(t *testing.T) {
 		t.Fatal("transition missing")
 	}
 }
+
 func TestQueueTTLAndRetry(t *testing.T) {
 	s := store(t)
 	o := Observation{RoomID: 1, Live: true, At: 1000}
@@ -161,9 +167,11 @@ func (f transport) RoundTrip(r *http.Request) (*http.Response, error) { return f
 func response(body string, status int) *http.Response {
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}
 }
+
 func mockHTTP(f transport) *HTTP {
 	return &HTTP{Client: &http.Client{Transport: f, Timeout: time.Second}}
 }
+
 func TestWebhookSignatureAndBusinessError(t *testing.T) {
 	c := testConfig(t)
 	t.Setenv(c.Notification.Group.Webhook, "https://open.feishu.cn/open-apis/bot/v2/hook/test")
@@ -194,6 +202,7 @@ func TestWebhookSignatureAndBusinessError(t *testing.T) {
 		t.Fatal("signature vector")
 	}
 }
+
 func TestPrivateTokenRefresh(t *testing.T) {
 	c := testConfig(t)
 	c.Notification.Mode = "feishu_private"
@@ -219,6 +228,7 @@ func TestPrivateTokenRefresh(t *testing.T) {
 		t.Fatal(tokens, sends)
 	}
 }
+
 func TestLockInterop(t *testing.T) {
 	dir := t.TempDir()
 	release, e := Lock(dir, "instance")
@@ -232,7 +242,7 @@ func TestLockInterop(t *testing.T) {
 		t.Fatal("Node lock path mismatch")
 	}
 	release()
-	os.Mkdir(filepath.Join(dir, "var/instance.guard.lock"), 0700)
+	os.Mkdir(filepath.Join(dir, "var/instance.guard.lock"), 0o700)
 	old := time.Now().Add(-time.Minute)
 	os.Chtimes(filepath.Join(dir, "var/instance.guard.lock"), old, old)
 	release, e = Lock(dir, "instance")
@@ -241,25 +251,28 @@ func TestLockInterop(t *testing.T) {
 	}
 	release()
 }
+
 func TestEnvPermissionsAndPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".env")
-	os.WriteFile(p, []byte("MONITOR_TEST_ENV=file\n"), 0644)
+	os.WriteFile(p, []byte("MONITOR_TEST_ENV=file\n"), 0o644)
 	if LoadEnv(dir) == nil {
 		t.Fatal("permissions")
 	}
-	os.Chmod(p, 0600)
+	os.Chmod(p, 0o600)
 	t.Setenv("MONITOR_TEST_ENV", "shell")
 	if e := LoadEnv(dir); e != nil || os.Getenv("MONITOR_TEST_ENV") != "shell" {
 		t.Fatal(e)
 	}
 }
+
 func TestServiceTemplates(t *testing.T) {
 	p, u := ServiceFiles(`/tmp/a & "b"`, "/bin/monitor")
 	if !strings.Contains(p, "&amp;") || !strings.Contains(p, "KeepAlive") || !strings.Contains(u, "Restart=on-failure") || !strings.Contains(u, "TimeoutStopSec=80") || !strings.Contains(u, "StartLimitIntervalSec=0") {
 		t.Fatal("templates")
 	}
 }
+
 func TestWorkerNoNetworkOutsideWindow(t *testing.T) {
 	c := testConfig(t)
 	c.Schedule.Weekdays = []int{int(time.Now().Weekday())%7 + 1}
@@ -281,6 +294,7 @@ func TestWorkerNoNetworkOutsideWindow(t *testing.T) {
 		t.Fatal("shutdown state")
 	}
 }
+
 func TestWorkerDurableSendAndRestart(t *testing.T) {
 	c := testConfig(t)
 	c.Schedule.Weekdays = []int{1, 2, 3, 4, 5, 6, 7}

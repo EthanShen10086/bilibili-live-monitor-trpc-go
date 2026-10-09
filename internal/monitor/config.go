@@ -94,6 +94,7 @@ func Load(root string) (Config, error) {
 	}
 	return c, c.Validate()
 }
+
 func LoadEnv(root string) error {
 	p := filepath.Join(root, ".env")
 	f, e := os.Stat(p)
@@ -103,7 +104,7 @@ func LoadEnv(root string) error {
 	if e != nil {
 		return e
 	}
-	if f.Mode().Perm() != 0600 {
+	if f.Mode().Perm() != 0o600 {
 		return fmt.Errorf(".env must have permissions 600")
 	}
 	b, e := os.ReadFile(p)
@@ -127,6 +128,7 @@ func LoadEnv(root string) error {
 	}
 	return nil
 }
+
 func minutes(s string) (int, error) {
 	if s == "24:00" {
 		return 1440, nil
@@ -145,6 +147,7 @@ func minutes(s string) (int, error) {
 	}
 	return h*60 + m, nil
 }
+
 func (c Config) Validate() error {
 	if p := c.Observability.SampleRatio; p != nil && (*p < 0 || *p > 1) {
 		return fmt.Errorf("observability.sample_ratio must be 0..1")
@@ -206,6 +209,7 @@ func (c Config) Validate() error {
 	}
 	return nil
 }
+
 func (c Config) Credentials() error {
 	names := []string{}
 	if c.Platform.StorageMode() == "postgres" {
@@ -237,6 +241,7 @@ func (c Config) Credentials() error {
 	}
 	return nil
 }
+
 func (c Config) InWindow(now time.Time) bool {
 	loc, _ := time.LoadLocation(c.Schedule.Timezone)
 	t := now.In(loc)
@@ -255,6 +260,7 @@ func (c Config) InWindow(now time.Time) bool {
 	m := t.Hour()*60 + t.Minute()
 	return found && m >= s && m < e
 }
+
 func Backoff(n, base int) time.Duration {
 	if n < 1 {
 		n = 1

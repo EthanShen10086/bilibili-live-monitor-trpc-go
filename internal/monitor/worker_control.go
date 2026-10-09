@@ -71,6 +71,7 @@ func (q *QueueSchedule) Refresh(now time.Time) error {
 	q.NextCheck = now.Add(WorkerHeartbeat)
 	return nil
 }
+
 func Earliest(fallback time.Time, candidates ...time.Time) time.Time {
 	for _, v := range candidates {
 		if !v.IsZero() && v.Before(fallback) {

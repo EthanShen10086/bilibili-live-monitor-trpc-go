@@ -3,10 +3,11 @@
 package monitor
 
 import (
-	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"golang.org/x/sys/unix"
 )
 
 // Redirect descriptors, so framework loggers that cached stdout/stderr are captured too.

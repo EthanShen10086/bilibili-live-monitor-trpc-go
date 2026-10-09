@@ -40,6 +40,7 @@ func NormalizeStart(v any) string {
 	}
 	return t.UTC().Format("2006-01-02T15:04:05.000Z")
 }
+
 func ParseRoom(b []byte, requested int64, at time.Time) (Observation, error) {
 	var r struct {
 		Code *int `json:"code"`
@@ -66,6 +67,7 @@ func ParseRoom(b []byte, requested int64, at time.Time) (Observation, error) {
 	}
 	return Observation{d.RoomID, *d.Live == 1, *d.Title, NormalizeStart(d.Start), at.UnixMilli()}, nil
 }
+
 func (h *HTTP) Probe(ctx context.Context, c Config) (Observation, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.Detector.Polling.Timeout)*time.Second)
 	defer cancel()

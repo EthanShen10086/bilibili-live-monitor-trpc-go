@@ -57,6 +57,7 @@ func TestPlatformConfigIsolation(t *testing.T) {
 		t.Fatal("shared DB state must not be copied as SQLite")
 	}
 }
+
 func TestMemoryCacheCopiesAndExpires(t *testing.T) {
 	c := NewMemoryCache()
 	ctx := context.Background()

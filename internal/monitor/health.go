@@ -10,9 +10,11 @@ func (s Status) Live(now time.Time) bool {
 	} // Old local status snapshots remain readable.
 	return s.Running && age >= -2000 && age <= 20000 && now.UnixMilli()-progress >= -2000 && now.UnixMilli()-progress <= 90000
 }
+
 func (s Status) Ready(now time.Time) bool {
 	return s.Live(now) && s.State != "starting" && s.State != "stopped" && s.State != "blocked" && s.State != "session_cleanup_failed" && s.NotificationState != "blocked"
 }
+
 func (s Status) BusinessHealthy(now time.Time) bool {
 	if !s.Ready(now) || s.State == "retrying" || s.QueueError != "" {
 		return false

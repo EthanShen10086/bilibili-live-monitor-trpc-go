@@ -18,8 +18,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const Label = "com.bilibili.live-monitor"
-const Unit = "live-monitor.service"
+const (
+	Label = "com.bilibili.live-monitor"
+	Unit  = "live-monitor.service"
+)
 
 func Quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 func servicePath(side string) string {
@@ -29,9 +31,11 @@ func servicePath(side string) string {
 	}
 	return filepath.Join(home, ".config/systemd/user", Unit)
 }
+
 func unitQuote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, `%`, `%%`).Replace(s) + `"`
 }
+
 func ServiceFiles(root, exe string) (string, string) {
 	args := []string{exe, "--root", root, "run", "--managed", "local"}
 	plist := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>` + Label + `</string><key>ProgramArguments</key><array>`
@@ -49,6 +53,7 @@ func platform(side string) error {
 	}
 	return fmt.Errorf("side %s does not match operating system", side)
 }
+
 func Loaded(ctx context.Context, side string) bool {
 	if side == "local" {
 		_, e := Command(ctx, "launchctl", "print", target())
@@ -57,6 +62,7 @@ func Loaded(ctx context.Context, side string) bool {
 	_, e := Command(ctx, "systemctl", "--user", "is-active", "--quiet", Unit)
 	return e == nil
 }
+
 func Doctor(ctx context.Context, side string) (map[string]any, error) {
 	if e := platform(side); e != nil {
 		return nil, e
@@ -78,6 +84,7 @@ func Doctor(ctx context.Context, side string) (map[string]any, error) {
 	}
 	return r, nil
 }
+
 func Health(ctx context.Context, root, side string) error {
 	if !Loaded(ctx, side) {
 		return fmt.Errorf("service manager reports inactive")
@@ -97,6 +104,7 @@ func Health(ctx context.Context, root, side string) error {
 	}
 	return nil
 }
+
 func AssertStopped(root string) error {
 	s, e := ReadStatus(root)
 	if e != nil && !os.IsNotExist(e) {
@@ -119,6 +127,7 @@ func AssertStopped(root string) error {
 	release()
 	return nil
 }
+
 func Service(ctx context.Context, root, side, action string) error {
 	if e := platform(side); e != nil {
 		return e
@@ -198,6 +207,7 @@ func Service(ctx context.Context, root, side, action string) error {
 	}
 	return fmt.Errorf("unknown service action")
 }
+
 func Recovery(ctx context.Context, root, side string) (map[string]any, error) {
 	release, e := Lock(root, "management")
 	if e != nil {
@@ -249,6 +259,7 @@ func Recovery(ctx context.Context, root, side string) (map[string]any, error) {
 	}
 	return nil, fmt.Errorf("no new healthy managed worker within 60 seconds")
 }
+
 func SetActive(root, side string) error {
 	if side != "local" && side != "cloud" {
 		return fmt.Errorf("invalid active side")
@@ -264,6 +275,7 @@ func SetActive(root, side string) error {
 	}
 	return Atomic(filepath.Join(root, "config.yaml"), b)
 }
+
 func Remote(ctx context.Context, c Config, input []byte, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -279,6 +291,7 @@ func Remote(ctx context.Context, c Config, input []byte, args ...string) (string
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
 func Export(root string) (string, error) {
 	if e := AssertStopped(root); e != nil {
 		return "", e
@@ -296,6 +309,7 @@ func Export(root string) (string, error) {
 	b, e := os.ReadFile(filepath.Join(root, "var/state.sqlite"))
 	return base64.StdEncoding.EncodeToString(b), e
 }
+
 func Import(root, b64 string) error {
 	if e := AssertStopped(root); e != nil {
 		return e
@@ -378,6 +392,7 @@ func Switch(from, to string, o SwitchOps) error {
 	}
 	return nil
 }
+
 func DeploySwitch(ctx context.Context, root string, c Config, to string) error {
 	if c.Platform.StorageMode() != "sqlite" {
 		return fmt.Errorf("shared PostgreSQL mode uses independent deployment; SQLite file switching is disabled")

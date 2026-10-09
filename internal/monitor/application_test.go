@@ -24,6 +24,7 @@ func activeConfig(t *testing.T) Config {
 	t.Setenv(c.Notification.Group.Secret, "fake")
 	return c
 }
+
 func TestSlowDeliveryDoesNotBlockDetectorAndDrainsOnStop(t *testing.T) {
 	c := activeConfig(t)
 	one := 1
@@ -100,6 +101,7 @@ func TestSlowDeliveryDoesNotBlockDetectorAndDrainsOnStop(t *testing.T) {
 		t.Fatal(counts, err)
 	}
 }
+
 func TestPermanentFailureDegradesBusinessHealthButKeepsProcessLive(t *testing.T) {
 	c := activeConfig(t)
 	root := t.TempDir()
@@ -131,6 +133,7 @@ func TestPermanentFailureDegradesBusinessHealthButKeepsProcessLive(t *testing.T)
 	}
 	t.Fatal("notification failure not exposed")
 }
+
 func TestNotifierPanicBecomesDurableFailure(t *testing.T) {
 	result := make(chan deliveryResult, 1)
 	go deliver(context.Background(), testNotifier(func(context.Context, string, string) error { panic("provider panic") }), "", "", &Job{Key: "test"}, "", result)

@@ -36,6 +36,7 @@ func TestThrottlingAndWrappedPermanentClassification(t *testing.T) {
 		}
 	}
 }
+
 func TestRedisCacheFailureOpensBoundedCircuit(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 50 * time.Millisecond, ContextTimeoutEnabled: true})
 	defer client.Close()
@@ -52,6 +53,7 @@ func TestRedisCacheFailureOpensBoundedCircuit(t *testing.T) {
 		t.Fatal("disabled cache delays status")
 	}
 }
+
 func TestConfigRejectsTyposAndMultipleDocuments(t *testing.T) {
 	original, err := os.ReadFile("../../config.yaml")
 	if err != nil {
@@ -59,7 +61,7 @@ func TestConfigRejectsTyposAndMultipleDocuments(t *testing.T) {
 	}
 	for _, data := range []string{string(original) + "\nmisspelled_setting: true\n", string(original) + "\n---\nsubscription: {}\n", strings.Replace(string(original), "room_id:", "rom_id:", 1)} {
 		root := t.TempDir()
-		os.WriteFile(filepath.Join(root, "config.yaml"), []byte(data), 0600)
+		os.WriteFile(filepath.Join(root, "config.yaml"), []byte(data), 0o600)
 		if _, err := Load(root); err == nil {
 			t.Fatal("invalid config accepted")
 		}

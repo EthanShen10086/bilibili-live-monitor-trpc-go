@@ -30,7 +30,7 @@ func TestOnlineBackupAndStoppedRestorePreserveDeduplication(t *testing.T) {
 	if err = BackupSQLite(context.Background(), root, backup); err == nil {
 		t.Fatal("overwrote backup")
 	}
-	if info, _ := os.Stat(backup); info.Mode().Perm() != 0600 {
+	if info, _ := os.Stat(backup); info.Mode().Perm() != 0o600 {
 		t.Fatal("backup permissions")
 	}
 	target := t.TempDir()

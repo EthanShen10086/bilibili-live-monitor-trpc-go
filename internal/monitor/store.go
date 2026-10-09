@@ -12,12 +12,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ DB *sql.DB }
-type Job struct {
-	Key, Payload string
-	Attempts     int
-	Expires      int64
-}
+type (
+	Store struct{ DB *sql.DB }
+	Job   struct {
+		Key, Payload string
+		Attempts     int
+		Expires      int64
+	}
+)
 
 func ID() string {
 	b := make([]byte, 16)
@@ -26,8 +28,9 @@ func ID() string {
 	}
 	return hex.EncodeToString(b)
 }
+
 func OpenStore(file string) (*Store, error) {
-	if e := os.MkdirAll(filepath.Dir(file), 0700); e != nil {
+	if e := os.MkdirAll(filepath.Dir(file), 0o700); e != nil {
 		return nil, e
 	}
 	db, e := sql.Open("sqlite", file)
@@ -45,12 +48,13 @@ CREATE TABLE IF NOT EXISTS jobs(key TEXT PRIMARY KEY,payload TEXT NOT NULL,statu
 		db.Close()
 		return nil, e
 	}
-	if e = os.Chmod(file, 0600); e != nil {
+	if e = os.Chmod(file, 0o600); e != nil {
 		db.Close()
 		return nil, e
 	}
 	return &Store{db}, nil
 }
+
 func (s *Store) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	tx, e := s.DB.Begin()
 	if e != nil {
@@ -109,12 +113,14 @@ func (s *Store) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	}
 	return added, tx.Commit()
 }
+
 func nullable(s string) any {
 	if s == "" {
 		return nil
 	}
 	return s
 }
+
 func (s *Store) Due(now time.Time) (*Job, error) {
 	_, e := s.DB.Exec("UPDATE jobs SET status='expired' WHERE status='pending' AND expires<=?", now.UnixMilli())
 	if e != nil {
@@ -127,10 +133,12 @@ func (s *Store) Due(now time.Time) (*Job, error) {
 	}
 	return &j, e
 }
+
 func (s *Store) Sent(k string) error {
 	_, e := s.DB.Exec("UPDATE jobs SET status='sent',last_error=NULL WHERE key=?", k)
 	return e
 }
+
 func (s *Store) Failed(j *Job, err error, now time.Time) error {
 	state := "failed"
 	if Retryable(err) {
@@ -139,6 +147,7 @@ func (s *Store) Failed(j *Job, err error, now time.Time) error {
 	_, e := s.DB.Exec("UPDATE jobs SET status=?,attempts=attempts+1,next=?,last_error=? WHERE key=?", state, now.Add(RetryDelay(err, j.Attempts+1, 5)).UnixMilli(), err.Error(), j.Key)
 	return e
 }
+
 func (s *Store) Retry(now time.Time) (int64, error) {
 	r, e := s.DB.Exec("UPDATE jobs SET status='pending',next=?,last_error=NULL WHERE status='failed' AND expires>?", now.UnixMilli(), now.UnixMilli())
 	if e != nil {
@@ -146,6 +155,7 @@ func (s *Store) Retry(now time.Time) (int64, error) {
 	}
 	return r.RowsAffected()
 }
+
 func (s *Store) Counts() (map[string]int, error) {
 	rows, e := s.DB.Query("SELECT status,count(*) FROM jobs GROUP BY status")
 	if e != nil {
@@ -169,6 +179,7 @@ func (s *Store) DataVersion() (int64, error) {
 	e := s.DB.QueryRow("PRAGMA data_version").Scan(&v)
 	return v, e
 }
+
 func (s *Store) NextWake() (time.Time, error) {
 	var next, expires sql.NullInt64
 	if e := s.DB.QueryRow("SELECT MIN(next),MIN(expires) FROM jobs WHERE status='pending'").Scan(&next, &expires); e != nil {
@@ -213,6 +224,7 @@ func (s *Store) NextCleanupAt(days int, now time.Time) (time.Time, error) {
 	}
 	return Earliest(now.Add(24*time.Hour), time.UnixMilli(last).Add(24*time.Hour)), nil
 }
+
 func (s *Store) CleanupHistory(days int, now time.Time) (int64, error) {
 	if days == 0 {
 		return 0, nil

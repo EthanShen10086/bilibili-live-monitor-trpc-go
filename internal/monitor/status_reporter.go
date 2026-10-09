@@ -35,6 +35,7 @@ func newStatusReporter(file string) *statusReporter {
 	}()
 	return r
 }
+
 func (r *statusReporter) Report(s Status, now time.Time, force bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -44,6 +45,7 @@ func (r *statusReporter) Report(s Status, now time.Time, force bool) error {
 	r.snapshot = s
 	return r.writer.Report(&r.snapshot, now, force)
 }
+
 func (r *statusReporter) Close(s Status, now time.Time) error {
 	close(r.stop)
 	<-r.done

@@ -13,10 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 )
 
 func TestMetricsAndSpansExcludeProviderSecrets(t *testing.T) {

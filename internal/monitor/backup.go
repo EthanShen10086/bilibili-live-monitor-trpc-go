@@ -36,7 +36,7 @@ func snapshotSQLite(ctx context.Context, source, destination string) (err error)
 	if e = db.QueryRowContext(cc, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('observations','jobs','maintenance')").Scan(&count); e != nil || count != 3 {
 		return fmt.Errorf("source is not a monitor database")
 	}
-	f, e := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, e := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if e != nil {
 		return e
 	}
@@ -49,9 +49,11 @@ func snapshotSQLite(ctx context.Context, source, destination string) (err error)
 	_, err = db.ExecContext(cc, "VACUUM INTO ?", destination)
 	return err
 }
+
 func BackupSQLite(ctx context.Context, root, destination string) error {
 	return snapshotSQLite(ctx, filepath.Join(root, "var/state.sqlite"), destination)
 }
+
 func RestoreSQLite(ctx context.Context, root, source string) error {
 	if !filepath.IsAbs(source) {
 		return fmt.Errorf("restore source must be absolute")

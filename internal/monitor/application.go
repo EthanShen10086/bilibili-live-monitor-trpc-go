@@ -13,17 +13,21 @@ type Detector interface {
 type Notifier interface {
 	Send(context.Context, string, string) error
 }
-type Leadership interface{ Leadership() (bool, error) }
-type Timer interface {
-	Channel() <-chan time.Time
-	Stop() bool
-}
+type (
+	Leadership interface{ Leadership() (bool, error) }
+	Timer      interface {
+		Channel() <-chan time.Time
+		Stop() bool
+	}
+)
 type Clock interface {
 	Now() time.Time
 	NewTimer(time.Duration) Timer
 }
-type realClock struct{}
-type realTimer struct{ *time.Timer }
+type (
+	realClock struct{}
+	realTimer struct{ *time.Timer }
+)
 
 func (realClock) Now() time.Time                 { return time.Now() }
 func (realClock) NewTimer(d time.Duration) Timer { return realTimer{time.NewTimer(d)} }

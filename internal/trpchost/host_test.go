@@ -38,6 +38,7 @@ func TestHTTPHealthAndStatus(t *testing.T) {
 		t.Fatal(r.Code)
 	}
 }
+
 func TestFrameworkConfigLoopback(t *testing.T) {
 	c, e := LoadConfig("../..")
 	if e != nil || c.Server.Service[0].IP != "127.0.0.1" {
@@ -88,6 +89,7 @@ func TestIndependentProbesAndMetrics(t *testing.T) {
 		}
 	}
 }
+
 func TestRecoveryReturnsErrorAfterPanic(t *testing.T) {
 	rsp, err := recovery(context.Background(), nil, func(context.Context, interface{}) (interface{}, error) { panic("sensitive") })
 	if err == nil || rsp != nil || strings.Contains(err.Error(), "sensitive") {

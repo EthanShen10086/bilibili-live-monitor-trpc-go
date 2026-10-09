@@ -58,6 +58,7 @@ func ReadStatus(root string) (Status, error) {
 	e = json.Unmarshal(b, &s)
 	return s, e
 }
+
 func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, deps Dependencies) (runErr error) {
 	defaults := defaultDependencies(c, h)
 	if deps.Detector == nil {

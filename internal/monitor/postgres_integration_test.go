@@ -3,7 +3,6 @@ package monitor
 import (
 	"context"
 	"errors"
-	"gopkg.in/yaml.v3"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func platformConfig(t *testing.T) Config {
@@ -29,6 +30,7 @@ func platformConfig(t *testing.T) Config {
 	t.Setenv("TEST_PLATFORM_PG", dsn)
 	return c
 }
+
 func platformStore(t *testing.T, c Config) *PostgresStore {
 	t.Helper()
 	s, e := OpenPostgres(context.Background(), c)
@@ -38,6 +40,7 @@ func platformStore(t *testing.T, c Config) *PostgresStore {
 	t.Cleanup(func() { s.Close() })
 	return s
 }
+
 func clearScope(t *testing.T, s *PostgresStore) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -46,6 +49,7 @@ func clearScope(t *testing.T, s *PostgresStore) {
 		s.DB.Exec("DELETE FROM lm_scopes WHERE scope=$1", s.Scope)
 	})
 }
+
 func TestPostgresLeaseDedupeAndConcurrentClaims(t *testing.T) {
 	c := platformConfig(t)
 	a := platformStore(t, c)
@@ -112,6 +116,7 @@ func TestPostgresLeaseDedupeAndConcurrentClaims(t *testing.T) {
 		t.Fatal("scope changed room")
 	}
 }
+
 func TestPostgresLeaseExpiryRetryAndCleanup(t *testing.T) {
 	c := platformConfig(t)
 	a := platformStore(t, c)
@@ -167,6 +172,7 @@ func TestPostgresLeaseExpiryRetryAndCleanup(t *testing.T) {
 		t.Fatal(counts, e)
 	}
 }
+
 func TestRedisOutboxAndCacheIntegration(t *testing.T) {
 	c := platformConfig(t)
 	url := os.Getenv("MONITOR_TEST_REDIS")
@@ -302,7 +308,7 @@ func TestPostgresImportsSQLiteDedupeAtomically(t *testing.T) {
 	clearScope(t, a)
 	root := t.TempDir()
 	b, _ := yaml.Marshal(c)
-	if err := os.WriteFile(filepath.Join(root, "config.yaml"), b, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "config.yaml"), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	legacy, err := OpenStore(filepath.Join(root, "var/state.sqlite"))

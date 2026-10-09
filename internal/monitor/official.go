@@ -63,6 +63,7 @@ type Official struct {
 func NewOfficial(c Config, h *HTTP, room int64) *Official {
 	return &Official{c: c, h: h, room: room, Events: make(chan Observation, 128), Changed: make(chan struct{}, 1), ready: make(chan struct{}), done: make(chan struct{})}
 }
+
 func (o *Official) setError(e error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -74,6 +75,7 @@ func (o *Official) setError(e error) {
 		}
 	}
 }
+
 func (o *Official) api(ctx context.Context, route string, payload any, out any) error {
 	body := jsonBody(payload)
 	c := o.c.Detector.Official
@@ -102,6 +104,7 @@ func (o *Official) api(ctx context.Context, route string, payload any, out any) 
 	}
 	return nil
 }
+
 func frame(op uint32, b []byte) []byte {
 	r := make([]byte, 16+len(b))
 	binary.BigEndian.PutUint32(r, uint32(len(r)))
@@ -112,6 +115,7 @@ func frame(op uint32, b []byte) []byte {
 	copy(r[16:], b)
 	return r
 }
+
 func DecodeFrames(b []byte, depth int, consume func(uint32, []byte) error) error {
 	if depth > 4 {
 		return fmt.Errorf("compression nesting limit")
@@ -162,6 +166,7 @@ func DecodeFrames(b []byte, depth int, consume func(uint32, []byte) error) error
 	}
 	return nil
 }
+
 func OfficialObservation(body []byte, room int64, at time.Time) (*Observation, error) {
 	var m struct {
 		Cmd  string `json:"cmd"`
@@ -198,6 +203,7 @@ func OfficialObservation(body []byte, room int64, at time.Time) (*Observation, e
 	}
 	return &Observation{room, live, title, NormalizeStart(stamp), at.UnixMilli()}, nil
 }
+
 func (o *Official) Start(ctx context.Context) error {
 	var r struct {
 		Game struct {
@@ -260,6 +266,7 @@ func (o *Official) Start(ctx context.Context) error {
 		return &RemoteError{"Official", "authentication_timeout", true}
 	}
 }
+
 func (o *Official) send(op uint32, b []byte) error {
 	o.write.Lock()
 	defer o.write.Unlock()
@@ -269,6 +276,7 @@ func (o *Official) send(op uint32, b []byte) error {
 	}
 	return nil
 }
+
 func (o *Official) read() {
 	defer close(o.done)
 	for {
@@ -322,6 +330,7 @@ func (o *Official) read() {
 		}
 	}
 }
+
 func (o *Official) heartbeat() {
 	t := time.NewTicker(20 * time.Second)
 	defer t.Stop()
@@ -338,6 +347,7 @@ func (o *Official) heartbeat() {
 		}
 	}
 }
+
 func (o *Official) Tick(ctx context.Context) error {
 	o.mu.Lock()
 	err := o.err
@@ -357,6 +367,7 @@ func (o *Official) Tick(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (o *Official) Stop(ctx context.Context) error {
 	if o.ws != nil {
 		o.ws.Close()

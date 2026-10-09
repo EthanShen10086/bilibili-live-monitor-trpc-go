@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
@@ -20,6 +19,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/monitor"
 )
 
 type Telemetry struct {
@@ -80,6 +81,7 @@ func New(ctx context.Context, c monitor.Config) (*Telemetry, error) {
 	}
 	return t, nil
 }
+
 func (t *Telemetry) Begin(ctx context.Context, op string) (context.Context, func(error)) {
 	ctx, span := t.tracer.Start(ctx, op)
 	start := time.Now()
@@ -99,6 +101,7 @@ func (t *Telemetry) Begin(ctx context.Context, op string) (context.Context, func
 		span.End()
 	}
 }
+
 func (t *Telemetry) Report(s monitor.Status) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -124,9 +127,11 @@ func (t *Telemetry) Report(s monitor.Status) {
 	}
 	t.leadership.Set(leader)
 }
+
 func (t *Telemetry) Handler() http.Handler {
 	return promhttp.HandlerFor(t.Registry, promhttp.HandlerOpts{Timeout: 2 * time.Second})
 }
+
 func (t *Telemetry) Close() error {
 	if t.provider == nil {
 		return nil

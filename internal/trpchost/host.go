@@ -24,6 +24,7 @@ func Handler(root string) http.Handler { return HandlerWithCache(root, nil) }
 func HandlerWithCache(root string, cache monitor.Cache) http.Handler {
 	return HandlerWithMetrics(root, cache, nil)
 }
+
 func HandlerWithMetrics(root string, cache monitor.Cache, metrics http.Handler) http.Handler {
 	cacheKey := "status:" + monitor.ID()
 	mux := http.NewServeMux()
@@ -81,6 +82,7 @@ func HandlerWithMetrics(root string, cache monitor.Cache, metrics http.Handler) 
 	mux.HandleFunc("/healthz", probe(monitor.Status.BusinessHealthy))
 	return mux
 }
+
 func LoadConfig(root string) (*trpc.Config, error) {
 	b, e := os.ReadFile(filepath.Join(root, "trpc_go.yaml"))
 	if e != nil {
@@ -108,6 +110,7 @@ func LoadConfig(root string) (*trpc.Config, error) {
 	}
 	return &c, nil
 }
+
 func Run(ctx context.Context, o monitor.Options) error {
 	c, e := monitor.PrepareRun(ctx, o)
 	if e != nil {
