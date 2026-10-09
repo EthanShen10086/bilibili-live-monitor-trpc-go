@@ -1,10 +1,13 @@
 package monitor
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 const (
@@ -29,7 +32,7 @@ func trimLog(file string) error {
 	}
 	tail := make([]byte, LogLimit)
 	_, e = f.ReadAt(tail, stat.Size()-LogLimit)
-	f.Close()
+	resource.Close(f)
 	if e != nil {
 		return e
 	}
@@ -59,9 +62,8 @@ func AppendBoundedLog(file string, p []byte) error {
 	if e != nil {
 		return e
 	}
-	defer f.Close()
 	_, e = f.Write(p)
-	return e
+	return errors.Join(e, f.Close())
 }
 
 type logWriter struct {
@@ -80,7 +82,8 @@ func (w *logWriter) Write(p []byte) (int, error) {
 }
 
 func copyLogs(file string, r *os.File, done chan<- struct{}) {
-	defer r.Close()
+	defer resource.Close(r)
 	defer close(done)
-	io.CopyBuffer(&logWriter{file: file}, r, make([]byte, 32*1024))
+	_, err := io.CopyBuffer(&logWriter{file: file}, r, make([]byte, 32*1024))
+	resource.LogError("copy_logs", err)
 }

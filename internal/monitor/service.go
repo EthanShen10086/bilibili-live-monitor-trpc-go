@@ -3,10 +3,13 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 type Status struct {
@@ -104,8 +107,11 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 	if e != nil {
 		return e
 	}
-	defer db.Close()
-	host, _ := os.Hostname()
+	defer resource.Close(db)
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
 	s := Status{PID: os.Getpid(), Host: host, Instance: ID(), Running: true, Started: nowTime().UnixMilli(), Mode: c.Detector.Mode, PollingInterval: c.PollingSeconds(), Notification: c.Notification.Mode, State: "starting"}
 
 	s.Storage, s.WorkerRole, s.QueueMode = c.Platform.StorageMode(), c.Platform.WorkerRole(), c.Platform.QueueMode()
@@ -116,7 +122,7 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 		if e != nil {
 			return e
 		}
-		defer streams.Close()
+		defer resource.Close(streams)
 	}
 	var nextStream time.Time
 	s.ResourceSafetyVersion = 1
@@ -256,7 +262,7 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 		official = nil
 		return nil
 	}
-	defer cleanup()
+	defer func() { runErr = errors.Join(runErr, cleanup()) }()
 	for ctx.Err() == nil {
 		select {
 		case result := <-deliveryDone:
@@ -287,7 +293,9 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 				if e = report(); e != nil {
 					return e
 				}
-				Pause(ctx, WorkerHeartbeat)
+				if err := Pause(ctx, WorkerHeartbeat); err != nil {
+					return nil
+				}
 				continue
 			}
 			s.State = "outside_window"
@@ -383,7 +391,9 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 							if e = report(); e != nil {
 								return e
 							}
-							Pause(ctx, WorkerHeartbeat)
+							if err := Pause(ctx, WorkerHeartbeat); err != nil {
+								return nil
+							}
 							continue
 						}
 						failures++

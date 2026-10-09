@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 func AtomicJSON(file string, v any) error {
@@ -32,7 +34,7 @@ func Atomic(file string, b []byte) error {
 		return e
 	}
 	if e := os.Rename(tmp, file); e != nil {
-		os.Remove(tmp)
+		resource.Remove(tmp)
 		return e
 	}
 	return nil
@@ -41,13 +43,17 @@ func Atomic(file string, b []byte) error {
 func Event(root, name string, data any) {
 	slog.Info(name, "details", data)
 	file := filepath.Join(root, "var/events.log")
-	b, _ := json.Marshal(map[string]any{"time": time.Now().UTC().Format(time.RFC3339Nano), "event": name, "details": data})
+	b, err := json.Marshal(map[string]any{"time": time.Now().UTC().Format(time.RFC3339Nano), "event": name, "details": data})
+	if err != nil {
+		resource.LogError("event_encode", err)
+		return
+	}
 	if err := AppendBoundedLog(file, append(b, '\n')); err != nil {
 		slog.Error("event_log_failed", "error", err.Error())
 	}
 }
 
-// Same directory-lock path/heartbeat timing as Node proper-lockfile.
+// Lock uses the same directory and heartbeat protocol as the Node implementation.
 func Lock(root, name string) (func(), error) {
 	dir := filepath.Join(root, "var")
 	if e := os.MkdirAll(dir, 0o700); e != nil {
@@ -58,7 +64,9 @@ func Lock(root, name string) (func(), error) {
 	if e != nil {
 		return nil, e
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		return nil, err
+	}
 	p := guard + ".lock"
 	if e = os.Mkdir(p, 0o700); e != nil {
 		stat, se := os.Stat(p)
@@ -101,7 +109,7 @@ func Lock(root, name string) (func(), error) {
 		close(stop)
 		<-done
 		if f, e := os.Stat(p); e == nil && os.SameFile(original, f) {
-			os.Remove(p)
+			resource.Remove(p)
 		}
 	}, nil
 }
@@ -139,8 +147,13 @@ func BootID() (string, error) {
 
 func ReadApproval(root string) Approval {
 	var a Approval
-	b, _ := os.ReadFile(filepath.Join(root, "var/boot-approval.json"))
-	json.Unmarshal(b, &a)
+	b, err := os.ReadFile(filepath.Join(root, "var/boot-approval.json"))
+	if err != nil {
+		return Approval{}
+	}
+	if json.Unmarshal(b, &a) != nil {
+		return Approval{}
+	}
 	return a
 }
 
@@ -167,14 +180,17 @@ func awaitApproval(ctx context.Context, root string, c Config, boot string) erro
 	}
 	defer release()
 	writer := StatusWriter{File: filepath.Join(root, "var/status.json")}
-	host, _ := os.Hostname()
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
 	status := Status{PID: os.Getpid(), Host: host, Running: true, State: "waiting_confirmation", Mode: c.Detector.Mode, HeartbeatSeconds: 10}
 	report := func() error { return writer.Report(&status, time.Now(), false) }
 	defer func() {
 		if writer.Writes > 0 && ctx.Err() != nil {
 			status.Running = false
 			status.State = "stopped"
-			writer.Report(&status, time.Now(), true)
+			resource.LogError("confirmation_status", writer.Report(&status, time.Now(), true))
 		}
 	}()
 	a := ReadApproval(root)

@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -74,7 +75,8 @@ func (h *HTTP) Probe(ctx context.Context, c Config) (Observation, error) {
 	var raw json.RawMessage
 	e := h.JSON(ctx, "GET", fmt.Sprintf("https://api.live.bilibili.com/room/v1/Room/get_info?room_id=%d", c.Subscription.RoomID), nil, nil, &raw)
 	if e != nil {
-		if r, ok := e.(*RemoteError); ok {
+		var r *RemoteError
+		if errors.As(e, &r) {
 			r.Retry = true
 		}
 		return Observation{}, e

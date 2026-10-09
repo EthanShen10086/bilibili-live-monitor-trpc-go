@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -46,7 +47,7 @@ func New(ctx context.Context, c monitor.Config) (*Telemetry, error) {
 	t.lastObservation = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_last_observation_timestamp_seconds", Help: "Last successful observation timestamp."})
 	t.lastSent = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_last_sent_timestamp_seconds", Help: "Last notification accepted and committed."})
 	t.leadership = prometheus.NewGauge(prometheus.GaugeOpts{Name: "live_monitor_leadership", Help: "Whether this process owns the detector lease."})
-	t.Registry.MustRegister(t.operations, t.duration, t.queue, t.state, t.lastProgress, t.lastObservation, t.lastSent, t.leadership, t.oldestPending, prometheus.NewGoCollector(), prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	t.Registry.MustRegister(t.operations, t.duration, t.queue, t.state, t.lastProgress, t.lastObservation, t.lastSent, t.leadership, t.oldestPending, collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	for _, op := range []string{"detector", "notification", "http"} {
 		for _, result := range []string{"success", "error"} {
 			t.operations.WithLabelValues(op, result)
@@ -113,7 +114,10 @@ func (t *Telemetry) Report(s monitor.Status) {
 		}
 		t.state.WithLabelValues(k).Set(value)
 	}
-	counts, _ := s.Pending.(map[string]int)
+	counts, ok := s.Pending.(map[string]int)
+	if !ok {
+		counts = map[string]int{}
+	}
 	for _, state := range []string{"pending", "sent", "failed", "expired"} {
 		t.queue.WithLabelValues(state).Set(float64(counts[state]))
 	}

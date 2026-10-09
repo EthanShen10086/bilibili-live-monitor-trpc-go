@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Business ports keep the worker independent of a provider or storage driver.
+// Detector observes upstream state without exposing provider protocols to the worker.
 type Detector interface {
 	Probe(context.Context, Config) (Observation, error)
 }
@@ -20,6 +20,7 @@ type (
 		Stop() bool
 	}
 )
+
 type Clock interface {
 	Now() time.Time
 	NewTimer(time.Duration) Timer
@@ -79,7 +80,7 @@ func defaultDependencies(c Config, h *HTTP) Dependencies {
 	return Dependencies{Detector: h, Notifier: &Feishu{Config: c, HTTP: h}, Clock: realClock{}, OpenRepository: OpenRepository, OpenQueue: func(c Config, db Repository) (TaskQueue, error) {
 		pg, ok := db.(*PostgresStore)
 		if !ok {
-			return nil, fmt.Errorf("Redis Streams requires a PostgreSQL repository")
+			return nil, fmt.Errorf("redis streams requires a PostgreSQL repository")
 		}
 		return OpenStreamQueue(c, pg)
 	}}

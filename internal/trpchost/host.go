@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	"gopkg.in/yaml.v3"
 	trpc "trpc.group/trpc-go/trpc-go"
 	thttp "trpc.group/trpc-go/trpc-go/http"
@@ -31,7 +33,7 @@ func HandlerWithMetrics(root string, cache monitor.Cache, metrics http.Handler) 
 	if metrics != nil {
 		mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
-				w.WriteHeader(405)
+				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
 			metrics.ServeHTTP(w, r)
@@ -39,42 +41,49 @@ func HandlerWithMetrics(root string, cache monitor.Cache, metrics http.Handler) 
 	}
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
-			w.WriteHeader(405)
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		if cache != nil {
 			if b, ok := cache.Get(r.Context(), cacheKey); ok {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Cache-Control", "no-store")
-				w.Write(b)
+				_, writeErr := w.Write(b)
+				resource.LogError("http_response_write", writeErr)
 				return
 			}
 		}
 		s, e := monitor.ReadStatus(root)
 		if e != nil {
-			http.Error(w, "worker not ready", 503)
+			http.Error(w, "worker not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		b, _ := json.Marshal(s)
+		b, err := json.Marshal(s)
+		if err != nil {
+			http.Error(w, "status encoding failed", http.StatusInternalServerError)
+			return
+		}
 		if cache != nil {
 			cache.Put(r.Context(), cacheKey, b, 2*time.Second)
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		w.Write(b)
+		_, writeErr := w.Write(b)
+		resource.LogError("http_response_write", writeErr)
 	})
 	probe := func(check func(monitor.Status, time.Time) bool) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != "GET" {
-				w.WriteHeader(405)
+				w.WriteHeader(http.StatusMethodNotAllowed)
 				return
 			}
 			s, e := monitor.ReadStatus(root)
 			if e != nil || !check(s, time.Now()) {
-				http.Error(w, "worker unhealthy", 503)
+				http.Error(w, "worker unhealthy", http.StatusServiceUnavailable)
 				return
 			}
-			w.Write([]byte("ok\n"))
+			_, writeErr := w.Write([]byte("ok\n"))
+			resource.LogError("http_response_write", writeErr)
 		}
 	}
 	mux.HandleFunc("/livez", probe(monitor.Status.Live))
@@ -124,7 +133,7 @@ func Run(ctx context.Context, o monitor.Options) error {
 	if e != nil {
 		return fmt.Errorf("initialize tRPC plugins: %w", e)
 	}
-	defer closePlugins()
+	defer func() { resource.LogError("trpc_plugin_close", closePlugins()) }()
 	if e = trpc.SetupClients(&cfg.Client); e != nil {
 		return fmt.Errorf("initialize tRPC clients: %w", e)
 	}
@@ -133,12 +142,12 @@ func Run(ctx context.Context, o monitor.Options) error {
 	if e != nil {
 		return e
 	}
-	defer cache.Close()
+	defer resource.Close(cache)
 	telemetry, e := observability.New(ctx, c)
 	if e != nil {
 		return e
 	}
-	defer telemetry.Close()
+	defer resource.Close(telemetry)
 	thttp.RegisterNoProtocolServiceMux(server.Service(ServiceName), HandlerWithMetrics(o.Root, cache, telemetry.Handler()))
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -165,7 +174,7 @@ func Run(ctx context.Context, o monitor.Options) error {
 	}
 	cancel()
 	closeDone := make(chan struct{})
-	go func() { server.Close(nil); close(closeDone) }()
+	go func() { resource.LogError("trpc_server_close", server.Close(nil)); close(closeDone) }()
 	if !workerFinished {
 		select {
 		case e := <-workerDone:

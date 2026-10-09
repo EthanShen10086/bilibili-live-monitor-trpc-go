@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 type RemoteError struct {
@@ -57,7 +59,7 @@ func (h *HTTP) JSON(ctx context.Context, method, url string, body []byte, header
 	if e != nil {
 		return &RemoteError{"HTTP", "network_or_timeout", true}
 	}
-	defer r.Body.Close()
+	defer func() { resource.LogError("http_response_close", r.Body.Close()) }()
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
 		remote := &RemoteError{"HTTP", fmt.Sprint(r.StatusCode), r.StatusCode == 429 || r.StatusCode >= 500}
 		if r.StatusCode == 429 || r.StatusCode == 503 {
@@ -74,7 +76,16 @@ func (h *HTTP) JSON(ctx context.Context, method, url string, body []byte, header
 	}
 	return nil
 }
-func jsonBody(v any) []byte { b, _ := json.Marshal(v); return b }
+
+// jsonBody only serializes internal, JSON-compatible payloads. An unsupported
+// type is a programming error; never convert it into an empty provider request.
+func jsonBody(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic("invalid internal JSON payload")
+	}
+	return b
+}
 
 // ThrottledError preserves safe provider classification and the server's retry budget.
 type ThrottledError struct {
@@ -99,7 +110,7 @@ func retryAfter(value string, now time.Time) time.Duration {
 	return delay
 }
 
-// Positive jitter spreads replicas without retrying sooner than the normal backoff.
+// RetryDelay spreads replicas without retrying sooner than the normal backoff.
 func RetryDelay(err error, attempt, base int) time.Duration {
 	delay := Backoff(attempt, base)
 	delay += time.Duration(rand.Float64() * float64(delay) / 5)

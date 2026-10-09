@@ -146,9 +146,12 @@ func TestOfficialReadAuthEventAndReject(t *testing.T) {
 			}
 			ws.ReadMessage()
 		}))
-		ws, _, e := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+		ws, resp, e := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
 		if e != nil {
 			t.Fatal(e)
+		}
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
 		}
 		o := NewOfficial(testConfig(t), NewHTTP(), 1)
 		o.ws = ws
@@ -181,6 +184,7 @@ func TestOfficialReadAuthEventAndReject(t *testing.T) {
 }
 
 func TestOfficialMismatchRetainsSessionUntilCleanup(t *testing.T) {
+	t.Setenv("BILI_APP_ID", "1")
 	ended := 0
 	h := mockHTTP(func(r *http.Request) (*http.Response, error) {
 		if strings.HasSuffix(r.URL.Path, "/end") {

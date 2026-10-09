@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,7 +23,10 @@ type Options struct {
 }
 
 func ParseOptions(args []string) (Options, error) {
-	root, _ := os.Getwd()
+	root, err := os.Getwd()
+	if err != nil {
+		return Options{}, err
+	}
 	o := Options{Root: root}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -47,7 +52,11 @@ func ParseOptions(args []string) (Options, error) {
 			o.Args = append(o.Args, args[i])
 		}
 	}
-	o.Root, _ = filepath.Abs(o.Root)
+	var errAbs error
+	o.Root, errAbs = filepath.Abs(o.Root)
+	if errAbs != nil {
+		return o, errAbs
+	}
 	return o, nil
 }
 
@@ -141,7 +150,7 @@ func CLI(ctx context.Context, o Options) error {
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer resource.Close(db)
 		return Print(map[string]any{"schema_version": 1, "notification_sent": false})
 	case "backup":
 		if c.Platform.StorageMode() != "sqlite" {
@@ -176,7 +185,7 @@ func CLI(ctx context.Context, o Options) error {
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer resource.Close(db)
 		n, err := db.ImportSQLite(ctx, o.Args[1], c)
 		if err != nil {
 			return err
@@ -190,20 +199,24 @@ func CLI(ctx context.Context, o Options) error {
 		if err != nil {
 			return err
 		}
-		defer db.Close()
+		defer resource.Close(db)
 		if c.Platform.CacheMode() == "redis" {
 			cache, err := OpenCache(c)
 			if err != nil {
 				return err
 			}
-			cache.Close()
+			resource.Close(cache)
 		}
 		if c.Platform.QueueMode() == "redis_streams" {
-			q, err := OpenStreamQueue(c, db.(*PostgresStore))
+			pg, ok := db.(*PostgresStore)
+			if !ok {
+				return fmt.Errorf("streams require postgres repository")
+			}
+			q, err := OpenStreamQueue(c, pg)
 			if err != nil {
 				return err
 			}
-			q.Close()
+			resource.Close(q)
 		}
 		return Print(map[string]any{"ready": true, "storage": c.Platform.StorageMode(), "queue": c.Platform.QueueMode(), "cache": c.Platform.CacheMode(), "role": c.Platform.WorkerRole(), "notification_sent": false})
 	case "run":
@@ -277,7 +290,9 @@ func CLI(ctx context.Context, o Options) error {
 				result["cloud_status"] = map[string]string{"error": "cloud status unavailable"}
 			} else {
 				var remote any
-				json.Unmarshal([]byte(out), &remote)
+				if err := json.Unmarshal([]byte(out), &remote); err != nil {
+					return fmt.Errorf("invalid cloud status JSON")
+				}
 				result["cloud_status"] = remote
 			}
 		}
@@ -295,7 +310,7 @@ func CLI(ctx context.Context, o Options) error {
 		if e != nil {
 			return e
 		}
-		defer db.Close()
+		defer resource.Close(db)
 		n, e := db.Retry(time.Now())
 		if e != nil {
 			return e

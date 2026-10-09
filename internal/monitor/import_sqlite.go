@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -40,7 +42,7 @@ func (s *PostgresStore) ImportSQLite(ctx context.Context, source string, c Confi
 	if err != nil {
 		return 0, err
 	}
-	defer sourceDB.Close()
+	defer resource.Close(sourceDB)
 	sourceDB.SetMaxOpenConns(1)
 	cc, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -48,7 +50,7 @@ func (s *PostgresStore) ImportSQLite(ctx context.Context, source string, c Confi
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	if err = s.lockScope(cc, tx); err != nil {
 		return 0, err
 	}
@@ -69,16 +71,16 @@ func (s *PostgresStore) ImportSQLite(ctx context.Context, source string, c Confi
 		var live int
 		var start, key sql.NullString
 		if err = rows.Scan(&room, &live, &start, &key); err != nil {
-			rows.Close()
+			resource.Close(rows)
 			return 0, err
 		}
 		if _, err = tx.ExecContext(cc, "INSERT INTO lm_observations(scope,room,live,start,key) VALUES($1,$2,$3,$4,$5)", s.Scope, room, live, start, key); err != nil {
-			rows.Close()
+			resource.Close(rows)
 			return 0, err
 		}
 	}
 	err = rows.Err()
-	rows.Close()
+	resource.Close(rows)
 	if err != nil {
 		return 0, err
 	}
@@ -86,7 +88,7 @@ func (s *PostgresStore) ImportSQLite(ctx context.Context, source string, c Confi
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	defer resource.Close(rows)
 	count := 0
 	for rows.Next() {
 		var key, payload, status string

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 // Migration history is global; subscription binding and jobs remain scoped.
@@ -36,17 +38,17 @@ func migratePlatform(ctx context.Context, tx *sql.Tx, apply bool) error {
 		var v int
 		var sum string
 		if err = rows.Scan(&v, &sum); err != nil {
-			rows.Close()
+			resource.Close(rows)
 			return err
 		}
 		if v != 1 || sum != checksum {
-			rows.Close()
+			resource.Close(rows)
 			return fmt.Errorf("unsupported or changed platform schema")
 		}
 		applied = true
 	}
 	err = rows.Err()
-	rows.Close()
+	resource.Close(rows)
 	if err != nil {
 		return err
 	}

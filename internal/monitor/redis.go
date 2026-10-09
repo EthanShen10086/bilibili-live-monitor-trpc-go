@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -59,7 +61,7 @@ type RedisCache struct {
 func redisClient(c Config) (*redis.Client, error) {
 	opts, e := redis.ParseURL(os.Getenv(c.Platform.Redis.URLEnv))
 	if e != nil {
-		return nil, fmt.Errorf("Redis URL invalid")
+		return nil, fmt.Errorf("redis URL invalid")
 	}
 	opts.DialTimeout = 2 * time.Second
 	opts.ReadTimeout = 2 * time.Second
@@ -72,8 +74,8 @@ func redisClient(c Config) (*redis.Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if e = client.Ping(ctx).Err(); e != nil {
-		client.Close()
-		return nil, fmt.Errorf("Redis connection failed")
+		resource.Close(client)
+		return nil, fmt.Errorf("redis connection failed")
 	}
 	return client, nil
 }
@@ -133,8 +135,8 @@ func OpenStreamQueue(c Config, s *PostgresStore) (*StreamQueue, error) {
 	defer cancel()
 	e = client.XGroupCreateMkStream(ctx, q.Stream, "senders", "0").Err()
 	if e != nil && e.Error() != "BUSYGROUP Consumer Group name already exists" {
-		client.Close()
-		return nil, fmt.Errorf("Redis consumer group setup failed")
+		resource.Close(client)
+		return nil, fmt.Errorf("redis consumer group setup failed")
 	}
 	return q, nil
 }
@@ -155,13 +157,13 @@ func (q *StreamQueue) Publish(ctx context.Context) error {
 	}
 	for key := range outbox {
 		if ctx.Err() != nil {
-			return fmt.Errorf("Redis publish budget exhausted")
+			return fmt.Errorf("redis publish budget exhausted")
 		}
 		cc, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_, e = q.Client.XAdd(cc, &redis.XAddArgs{Stream: q.Stream, MaxLen: 10000, Approx: true, Values: map[string]any{"key": key}}).Result()
 		cancel()
 		if e != nil {
-			return fmt.Errorf("Redis publish unavailable")
+			return fmt.Errorf("redis publish unavailable")
 		}
 		if e = q.Store.Published(key); e != nil {
 			return e
@@ -170,7 +172,7 @@ func (q *StreamQueue) Publish(ctx context.Context) error {
 	return nil
 }
 
-// Stream messages are durable wakeups. PostgreSQL claims and periodic scans govern actual sends.
+// Receive consumes wakeups; PostgreSQL claims and periodic scans govern actual sends.
 func (q *StreamQueue) Receive(ctx context.Context) (*Job, string, error) {
 	cc, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -178,13 +180,13 @@ func (q *StreamQueue) Receive(ctx context.Context) (*Job, string, error) {
 	var messages []redis.XMessage
 	if e == nil && len(streams) > 0 {
 		messages = streams[0].Messages
-	} else if e != nil && e != redis.Nil {
-		return nil, "", fmt.Errorf("Redis receive unavailable")
+	} else if e != nil && !errors.Is(e, redis.Nil) {
+		return nil, "", fmt.Errorf("redis receive unavailable")
 	}
 	if len(messages) == 0 {
 		messages, _, e = q.Client.XAutoClaim(cc, &redis.XAutoClaimArgs{Stream: q.Stream, Group: "senders", Consumer: q.Consumer, MinIdle: 60 * time.Second, Start: "0-0", Count: 1}).Result()
-		if e != nil && e != redis.Nil {
-			return nil, "", fmt.Errorf("Redis reclaim unavailable")
+		if e != nil && !errors.Is(e, redis.Nil) {
+			return nil, "", fmt.Errorf("redis reclaim unavailable")
 		}
 	}
 	if len(messages) == 0 {
@@ -193,8 +195,7 @@ func (q *StreamQueue) Receive(ctx context.Context) (*Job, string, error) {
 	m := messages[0]
 	key, ok := m.Values["key"].(string)
 	if !ok || len(key) > 512 {
-		q.Ack(ctx, m.ID)
-		return nil, "", nil
+		return nil, "", q.Ack(ctx, m.ID)
 	}
 	job, e := q.Store.ClaimKey(key)
 	if e != nil {
@@ -210,7 +211,7 @@ func (q *StreamQueue) Ack(ctx context.Context, id string) error {
 	cc, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if e := q.Client.XAck(cc, q.Stream, "senders", id).Err(); e != nil {
-		return fmt.Errorf("Redis acknowledgement unavailable")
+		return fmt.Errorf("redis acknowledgement unavailable")
 	}
 	// One consumer group per stream; delete confirmed wakeups without growing a history log.
 	return q.Client.XDel(cc, q.Stream, id).Err()

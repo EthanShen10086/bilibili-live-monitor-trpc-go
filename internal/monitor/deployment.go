@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,12 +26,15 @@ const (
 )
 
 func Quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
-func servicePath(side string) string {
-	home, _ := os.UserHomeDir()
-	if side == "local" {
-		return filepath.Join(home, "Library/LaunchAgents", Label+".plist")
+func servicePath(side string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(home, ".config/systemd/user", Unit)
+	if side == "local" {
+		return filepath.Join(home, "Library/LaunchAgents", Label+".plist"), nil
+	}
+	return filepath.Join(home, ".config/systemd/user", Unit), nil
 }
 
 func unitQuote(s string) string {
@@ -67,7 +72,11 @@ func Doctor(ctx context.Context, side string) (map[string]any, error) {
 	if e := platform(side); e != nil {
 		return nil, e
 	}
-	if _, e := os.Stat(servicePath(side)); e != nil {
+	path, err := servicePath(side)
+	if err != nil {
+		return nil, err
+	}
+	if _, e := os.Stat(path); e != nil {
 		return nil, fmt.Errorf("service not installed")
 	}
 	r := map[string]any{"installed": true, "platform": runtime.GOOS}
@@ -90,7 +99,10 @@ func Health(ctx context.Context, root, side string) error {
 		return fmt.Errorf("service manager reports inactive")
 	}
 	s, e := ReadStatus(root)
-	host, _ := os.Hostname()
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
 	if e != nil || s.Host != host || !s.BusinessHealthy(time.Now()) {
 		return fmt.Errorf("managed worker is not healthy")
 	}
@@ -110,7 +122,10 @@ func AssertStopped(root string) error {
 	if e != nil && !os.IsNotExist(e) {
 		return fmt.Errorf("cannot read previous status; refusing state transfer")
 	}
-	host, _ := os.Hostname()
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
 	if e == nil && s.Running && s.Host == host && s.PID > 1 {
 		p, err := os.FindProcess(s.PID)
 		if err == nil {
@@ -132,6 +147,10 @@ func Service(ctx context.Context, root, side, action string) error {
 	if e := platform(side); e != nil {
 		return e
 	}
+	path, err := servicePath(side)
+	if err != nil {
+		return err
+	}
 	switch action {
 	case "install":
 		if Loaded(ctx, side) {
@@ -149,7 +168,7 @@ func Service(ctx context.Context, root, side, action string) error {
 		if side == "cloud" {
 			body = u
 		}
-		if e = Atomic(servicePath(side), []byte(body)); e != nil {
+		if e = Atomic(path, []byte(body)); e != nil {
 			return e
 		}
 		if side == "cloud" {
@@ -168,7 +187,7 @@ func Service(ctx context.Context, root, side, action string) error {
 				_, e := Command(ctx, "launchctl", "kickstart", target())
 				return e
 			}
-			_, e := Command(ctx, "launchctl", "bootstrap", "gui/"+strconv.Itoa(os.Getuid()), servicePath(side))
+			_, e := Command(ctx, "launchctl", "bootstrap", "gui/"+strconv.Itoa(os.Getuid()), path)
 			return e
 		}
 		_, e := Command(ctx, "systemctl", "--user", "enable", "--now", Unit)
@@ -217,19 +236,22 @@ func Recovery(ctx context.Context, root, side string) (map[string]any, error) {
 	if e = Health(ctx, root, side); e != nil {
 		return nil, e
 	}
-	old, _ := ReadStatus(root)
+	old, err := ReadStatus(root)
+	if err != nil {
+		return nil, err
+	}
 	managerPID := func() (int, error) {
 		if side == "cloud" {
 			out, e := Command(ctx, "systemctl", "--user", "show", Unit, "--property=MainPID", "--value")
-			n, _ := strconv.Atoi(out)
-			return n, e
+			n, err := strconv.Atoi(out)
+			return n, errors.Join(e, err)
 		}
 		out, e := Command(ctx, "launchctl", "print", target())
 		for _, l := range strings.Split(out, "\n") {
 			l = strings.TrimSpace(l)
 			if strings.HasPrefix(l, "pid = ") {
-				n, _ := strconv.Atoi(strings.TrimPrefix(l, "pid = "))
-				return n, e
+				n, err := strconv.Atoi(strings.TrimPrefix(l, "pid = "))
+				return n, errors.Join(e, err)
 			}
 		}
 		return 0, fmt.Errorf("manager PID unavailable")
@@ -250,7 +272,10 @@ func Recovery(ctx context.Context, root, side string) (map[string]any, error) {
 			return nil, e
 		}
 		if Health(ctx, root, side) == nil {
-			s, _ := ReadStatus(root)
+			s, err := ReadStatus(root)
+			if err != nil {
+				return nil, err
+			}
 			n, e := managerPID()
 			if e == nil && n == s.PID && n != old.PID {
 				return map[string]any{"recovered": true, "before_pid": old.PID, "after_pid": n}, nil
@@ -305,7 +330,7 @@ func Export(root string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	db.DB.Close()
+	resource.Close(db.DB)
 	b, e := os.ReadFile(filepath.Join(root, "var/state.sqlite"))
 	return base64.StdEncoding.EncodeToString(b), e
 }

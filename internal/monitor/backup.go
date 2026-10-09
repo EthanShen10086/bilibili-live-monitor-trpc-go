@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 )
 
 // VACUUM INTO takes a consistent SQLite snapshot, including committed journal data.
@@ -24,7 +26,7 @@ func snapshotSQLite(ctx context.Context, source, destination string) (err error)
 	if e != nil {
 		return e
 	}
-	defer db.Close()
+	defer resource.Close(db)
 	cc, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var check string
@@ -40,10 +42,13 @@ func snapshotSQLite(ctx context.Context, source, destination string) (err error)
 	if e != nil {
 		return e
 	}
-	f.Close()
+	if err = f.Close(); err != nil {
+		resource.Remove(destination)
+		return err
+	}
 	defer func() {
 		if err != nil {
-			os.Remove(destination)
+			resource.Remove(destination)
 		}
 	}()
 	_, err = db.ExecContext(cc, "VACUUM INTO ?", destination)

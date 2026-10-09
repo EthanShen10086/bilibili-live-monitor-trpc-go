@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/EthanShen10086/bilibili-live-monitor-trpc-go/internal/resource"
 
 	_ "modernc.org/sqlite"
 )
@@ -45,11 +48,11 @@ CREATE TABLE IF NOT EXISTS jobs(key TEXT PRIMARY KEY,payload TEXT NOT NULL,statu
     CREATE INDEX IF NOT EXISTS jobs_pending_next ON jobs(next) WHERE status='pending';
     CREATE INDEX IF NOT EXISTS jobs_pending_expires ON jobs(expires) WHERE status='pending';`)
 	if e != nil {
-		db.Close()
+		resource.Close(db)
 		return nil, e
 	}
 	if e = os.Chmod(file, 0o600); e != nil {
-		db.Close()
+		resource.Close(db)
 		return nil, e
 	}
 	return &Store{db}, nil
@@ -60,11 +63,11 @@ func (s *Store) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	if e != nil {
 		return false, e
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	var live int
 	var start, key sql.NullString
 	e = tx.QueryRow("SELECT live,start,key FROM observations WHERE room=?", o.RoomID).Scan(&live, &start, &key)
-	if e != nil && e != sql.ErrNoRows {
+	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return false, e
 	}
 	k := ""
@@ -90,7 +93,7 @@ func (s *Store) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	if o.Live {
 		l = 1
 	}
-	if e == sql.ErrNoRows || live != l || start.String != actual || key.String != k {
+	if errors.Is(e, sql.ErrNoRows) || live != l || start.String != actual || key.String != k {
 		_, e = tx.Exec("INSERT OR REPLACE INTO observations(room,live,start,key) VALUES(?,?,?,?)", o.RoomID, l, nullable(actual), nullable(k))
 		if e != nil {
 			return false, e
@@ -103,12 +106,18 @@ func (s *Store) Observe(o Observation, catchup bool, ttl int) (bool, error) {
 	if k != "" {
 		o.Start = actual
 		n := Notice{o, k, catchup}
-		b, _ := json.Marshal(n)
+		b, err := json.Marshal(n)
+		if err != nil {
+			return false, err
+		}
 		r, err := tx.Exec("INSERT OR IGNORE INTO jobs(key,payload,next,expires) VALUES(?,?,?,?)", k, string(b), o.At, o.At+int64(ttl)*60000)
 		if err != nil {
 			return false, err
 		}
-		count, _ := r.RowsAffected()
+		count, err := r.RowsAffected()
+		if err != nil {
+			return false, err
+		}
 		added = count > 0
 	}
 	return added, tx.Commit()
@@ -128,7 +137,7 @@ func (s *Store) Due(now time.Time) (*Job, error) {
 	}
 	var j Job
 	e = s.DB.QueryRow("SELECT key,payload,attempts,expires FROM jobs WHERE status='pending' AND next<=? ORDER BY next LIMIT 1", now.UnixMilli()).Scan(&j.Key, &j.Payload, &j.Attempts, &j.Expires)
-	if e == sql.ErrNoRows {
+	if errors.Is(e, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return &j, e
@@ -161,7 +170,7 @@ func (s *Store) Counts() (map[string]int, error) {
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
+	defer resource.Close(rows)
 	m := map[string]int{}
 	for rows.Next() {
 		var k string
@@ -195,7 +204,7 @@ func (s *Store) PollingPhase(room int64) (string, error) {
 	var live int
 	var status sql.NullString
 	e := s.DB.QueryRow("SELECT o.live,j.status FROM observations o LEFT JOIN jobs j ON o.key=j.key WHERE o.room=?", room).Scan(&live, &status)
-	if e == sql.ErrNoRows {
+	if errors.Is(e, sql.ErrNoRows) {
 		return "awaiting_start", nil
 	}
 	if e != nil {
@@ -216,7 +225,7 @@ func (s *Store) NextCleanupAt(days int, now time.Time) (time.Time, error) {
 	}
 	var last int64
 	e := s.DB.QueryRow("SELECT last_cleanup FROM maintenance WHERE id=1").Scan(&last)
-	if e == sql.ErrNoRows {
+	if errors.Is(e, sql.ErrNoRows) {
 		return now, nil
 	}
 	if e != nil {
@@ -233,10 +242,10 @@ func (s *Store) CleanupHistory(days int, now time.Time) (int64, error) {
 	if e != nil {
 		return 0, e
 	}
-	defer tx.Rollback()
+	defer resource.Rollback(tx)
 	var last int64
 	e = tx.QueryRow("SELECT last_cleanup FROM maintenance WHERE id=1").Scan(&last)
-	if e != nil && e != sql.ErrNoRows {
+	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return 0, e
 	}
 	if e == nil && now.UnixMilli() >= last && now.Sub(time.UnixMilli(last)) < 24*time.Hour {

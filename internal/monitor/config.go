@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -86,7 +87,7 @@ func Load(root string) (Config, error) {
 		return c, fmt.Errorf("invalid YAML")
 	}
 	var extra any
-	if decoder.Decode(&extra) != io.EOF {
+	if !errors.Is(decoder.Decode(&extra), io.EOF) {
 		return c, fmt.Errorf("config.yaml must contain one YAML document")
 	}
 	if e = LoadEnv(root); e != nil {
@@ -123,7 +124,9 @@ func LoadEnv(root string) error {
 		k = strings.TrimSpace(strings.TrimPrefix(k, "export "))
 		v = strings.Trim(strings.TrimSpace(v), "\"'")
 		if _, ok = os.LookupEnv(k); !ok {
-			os.Setenv(k, v)
+			if err := os.Setenv(k, v); err != nil {
+				return fmt.Errorf("invalid environment variable name")
+			}
 		}
 	}
 	return nil
@@ -243,7 +246,10 @@ func (c Config) Credentials() error {
 }
 
 func (c Config) InWindow(now time.Time) bool {
-	loc, _ := time.LoadLocation(c.Schedule.Timezone)
+	loc, err := time.LoadLocation(c.Schedule.Timezone)
+	if err != nil {
+		return false
+	}
 	t := now.In(loc)
 	day := int(t.Weekday())
 	if day == 0 {
@@ -255,8 +261,14 @@ func (c Config) InWindow(now time.Time) bool {
 			found = true
 		}
 	}
-	s, _ := minutes(c.Schedule.Start)
-	e, _ := minutes(c.Schedule.End)
+	s, err := minutes(c.Schedule.Start)
+	if err != nil {
+		return false
+	}
+	e, err := minutes(c.Schedule.End)
+	if err != nil {
+		return false
+	}
 	m := t.Hour()*60 + t.Minute()
 	return found && m >= s && m < e
 }
