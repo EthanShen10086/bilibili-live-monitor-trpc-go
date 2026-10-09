@@ -1,6 +1,6 @@
 module github.com/EthanShen10086/bilibili-live-monitor-trpc-go
 
-go 1.26.3
+go 1.26.9
 
 require (
 	github.com/andybalholm/brotli v1.2.6
@@ -51,10 +51,10 @@ require (
 	go.uber.org/automaxprocs v1.3.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
-	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0
-	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
 	modernc.org/libc v1.77.1 // indirect
