@@ -344,7 +344,7 @@ func RunWithDependencies(ctx context.Context, root string, c Config, h *HTTP, de
 							s.State = "blocked"
 						}
 						s.LastError = err.Error()
-						next = nowTime().Add(RetryDelay(e, failures, currentInterval))
+						next = nowTime().Add(RetryDelay(err, failures, currentInterval))
 						Event(root, "detector_error", s.LastError)
 					} else {
 						if ctx.Err() == nil && c.InWindow(nowTime()) {
