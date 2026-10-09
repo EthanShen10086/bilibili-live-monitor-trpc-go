@@ -1,0 +1,23 @@
+groups:
+  - name: live-platform
+    rules:
+      - alert: PlatformProcessUnavailable
+        expr: up{job="live-platform"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Platform process scrape failed for two minutes'}
+      - alert: PlatformOutboxBacklog
+        expr: live_platform_outbox_pending > 100
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Durable events are waiting for broker acknowledgement'}
+      - alert: PlatformNotificationFailures
+        expr: live_platform_notifications{state="failed"} > 0
+        for: 1m
+        labels: {severity: warning}
+        annotations: {summary: 'Review terminal notification failures through tenant API'}
+      - alert: PlatformDatabaseProgressStalled
+        expr: time() - live_platform_progress_timestamp_seconds > 60
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: 'Worker database progress has stalled'}

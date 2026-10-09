@@ -1,0 +1,32 @@
+local.file_match "docker" {
+  path_targets = [{"__path__" = "/var/lib/docker/containers/*/*-json.log", "job" = "docker"}]
+}
+loki.source.file "docker" {
+  targets = local.file_match.docker.targets
+  forward_to = [loki.process.application.receiver]
+  tail_from_end = true
+}
+loki.process "application" {
+  stage.docker {}
+  stage.json { expressions = {service = "service", role = "role", level = "level"} }
+  stage.labels { values = {service = "", role = "", level = ""} }
+  // Event, task, tenant and trace IDs remain in log bodies, never index labels.
+  forward_to = [loki.write.local.receiver]
+}
+loki.write "local" {
+  endpoint { url = "http://loki:3100/loki/api/v1/push" }
+}
+otelcol.receiver.otlp "application" {
+  grpc { endpoint = "0.0.0.0:4317" }
+  http { endpoint = "0.0.0.0:4318" }
+  output { traces = [otelcol.processor.batch.application.input] }
+}
+otelcol.processor.batch "application" {
+  output { traces = [otelcol.exporter.otlp.tempo.input] }
+}
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls { insecure = true }
+  }
+}
