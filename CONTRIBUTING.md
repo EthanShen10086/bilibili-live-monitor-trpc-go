@@ -49,6 +49,10 @@ pre-push 读取 Git 提供的每个待推送 commit，导出提交快照执行 v
 
 ## 测试约定
 
+密钥防护使用固定 Gitleaks 版本：pre-commit 的 index 快照与 pre-push 的 verify 均
+扫描可发布源码，CI 拉取全部历史再扫描。输出强制脱敏，不配置整个文件/目录的
+秘密例外。确认的误报和精确例外见 [密钥扫描说明](docs/SECRET_SCANNING.md)。
+
 单元/组件测试与源码同包 *_test.go：表驱动覆盖边界；断言对外行为/持久化结果；优先标准 testing、httptest、临时 SQLite 和注入 fake。不调用真实 B站/飞书、不读取用户 .env、不写用户 var。t.Setenv 或全局日志修改的测试不使用 t.Parallel。异步测试用 channel 协调与有界等待，禁止靠长 sleep 凑结果。
 
 单订阅真实后端测试使用 `//go:build integration`，事件平台使用 `//go:build eventintegration`，由专用 CI 提供一次性 PostgreSQL/Redis/Kafka；配置缺失必须失败。不可指向生产 DSN。测试按 subscription_id 或随机 schema 隔离，清理自身 scope/stream；不对共享库执行破坏性清理。

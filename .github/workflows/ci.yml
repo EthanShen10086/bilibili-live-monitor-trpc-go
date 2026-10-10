@@ -7,11 +7,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - run: make tools
       - run: make verify
+      - run: python3 scripts/quality.py secrets-history
       - run: CGO_ENABLED=0 go build -o dist/monitor ./cmd/monitor
       - run: python3 scripts/smoke.py

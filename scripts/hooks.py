@@ -59,7 +59,7 @@ def check_snapshot(action, revision=None):
         for variable in git('rev-parse', '--local-env-vars').splitlines():
             env.pop(variable, None)
         if action == 'pre-commit':
-            actions = ('fmt-check', 'lint', 'test')
+            actions = ('fmt-check', 'lint', 'test', 'secrets')
         else:
             actions = ('verify',)
         for check in actions:

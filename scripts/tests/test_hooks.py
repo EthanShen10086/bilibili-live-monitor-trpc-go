@@ -46,7 +46,7 @@ class HookTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0)
             with mock.patch.object(hooks, 'ROOT', root), mock.patch.dict(os.environ, {'GIT_INDEX_FILE': str(root / '.git/index')}), mock.patch.object(hooks.subprocess, 'run', side_effect=run):
                 hooks.check_snapshot('pre-commit')
-            self.assertEqual(observed, ['staged good'] * 4)
+            self.assertEqual(observed, ['staged good'] * 5)
             self.assertEqual(before, git('write-tree'))
             self.assertEqual((root / 'data.txt').read_text(), 'unstaged bad')
 
