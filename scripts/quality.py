@@ -76,12 +76,16 @@ def verify():
     run(['go', 'mod', 'tidy', '-diff'])
     run([tool('govulncheck'), './...'])
     manifest()
+    secrets()
+
+def secrets(history=False):
+    run(['python3', 'scripts/secret-scan.py', tool('gitleaks'), *(['--history'] if history else [])])
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['tools', 'fmt', 'fmt-check', 'lint', 'test', 'integration', 'verify'])
+    parser.add_argument('action', choices=['tools', 'fmt', 'fmt-check', 'lint', 'test', 'integration', 'verify', 'secrets', 'secrets-history'])
     action = parser.parse_args().action
-    actions = {'tools': install, 'fmt': lambda: formatting(True), 'fmt-check': formatting, 'lint': lint, 'test': unit, 'integration': integration, 'verify': verify}
+    actions = {'tools': install, 'fmt': lambda: formatting(True), 'fmt-check': formatting, 'lint': lint, 'test': unit, 'integration': integration, 'verify': verify, 'secrets': secrets, 'secrets-history': lambda: secrets(True)}
     try:
         actions[action]()
     except (RuntimeError, subprocess.CalledProcessError) as error:

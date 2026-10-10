@@ -1,0 +1,12 @@
+title = "Monitor secret detection"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Compose JDBC service hostname and PostgreSQL port are not credentials"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''(^|/)deploy/event-platform/compose\.yaml$''']
+regexTarget = "match"
+regexes = ['''^keycloak-db:5432/keycloak$''']
