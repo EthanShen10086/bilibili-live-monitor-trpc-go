@@ -12,8 +12,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--cert-dir', type=Path, required=True)
     args = parser.parse_args()
-    hosts = {key: os.environ.get(key, default) for key, default in (
-        ('API_HOST', 'api.localhost'), ('AUTH_HOST', 'auth.localhost'), ('GRAFANA_HOST', 'grafana.localhost'))}
+    default_hosts = {'API_HOST': 'api.localhost', 'AUTH_HOST': 'auth.localhost',
+                     'GRAFANA_HOST': 'grafana.localhost'}
+    hosts = {key: os.environ.get(key, default) for key, default in default_hosts.items()}
     for host in hosts.values():
         if not re.fullmatch(r'[a-zA-Z0-9.-]+', host):
             raise SystemExit('Hosts must be DNS names without ports or paths; TLS entry uses port 443')
